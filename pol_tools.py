@@ -194,9 +194,11 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         except fits.verify.VerifyError:
             new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), output_verify='fix+warn')
         
-        fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
+        if len(path_fn.split('/')) == 1:
+            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
+        else:
+            fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
     
-    # pdb.set_trace()
     
     return
 
