@@ -195,6 +195,10 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     
     # Optionally write a new FITS cube and figure for the subtracted images.
     if save:
+        if save is True:
+            output_path = os.path.expanduser(os.path.splitext(path_fn)[0]) + "_quadsub.fits"
+        else:
+            output_path = save
         new_hdu = hdu
         new_data = data.copy()
         new_data[1] = Qr_sub
@@ -207,16 +211,22 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         new_hdu[1].header['QUADTHET'] = ("%.3f" % np.degrees(pf[0]), "Rotation angle of instr. quadrupole [degrees]")
         new_hdu[1].header['QUADAMP'] = ("%.3e" % 10**pf[1], "Amplitude of instr. quadrupole")
         
-        try:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"))
-        except fits.verify.VerifyError:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), output_verify='fix+warn')
         
-        if len(path_fn.split('/')) == 1:
-            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
-        else:
-            fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
-    
+        try:
+            new_hdu.writeto(output_path, overwrite=True)
+        except fits.verify.VerifyError:
+            new_hdu.writeto(output_path, output_verify='fix+warn', overwrite=True)
+        except OSError as ee:
+            print(ee)
+            print("WARNING: Not saving quadrupole-subtracted FITS file (see error above).")
+        
+        # pdb.set_trace()
+        # if len(path_fn.split('/')) == 1:
+        #     fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
+        # else:
+        #     fig0.savefig(os.path.split(os.path.expanduser(path_fn))[0] + , dpi=300, transparent=True, format='png')
+        #     fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
+        fig0.savefig(os.path.splitext(output_path)[0] + '.png', dpi=300, transparent=True, format='png')
     
 # TEMP!!! Subtract instrumental pol from Q and U.
     if path_fn_stokes is not None:

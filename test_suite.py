@@ -24,7 +24,8 @@ from astropy.io import fits
 from gpi_pol import pol_tools
 
 
-data_path = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
+base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
+output_dir = base_dir + "output/"
 
 
 class Suite:
@@ -41,9 +42,21 @@ class Suite:
         self.test_funcs = test_funcs
         self.func_kwargs = func_kwargs
         self.test_id = test_id
-        self.data_path = data_path
+        self.base_dir = base_dir
+        self.output_dir = output_dir
         self.datasets = datasets
         self.input_files = input_files
+    
+    # Set up output directories, etc.
+    def setup_dirs(self):
+        
+        for ds in self.datasets:
+            ds_output_dir = self.output_dir + ds
+            if not os.path.exists(ds_output_dir):
+                os.mkdir(ds_output_dir)
+                print("Created empty output directory at {}".format(ds_output_dir))
+        
+        return
     
     # Measure some metrics for comparison...
     def analyze_output(self):
@@ -84,8 +97,6 @@ class Suite:
                 if jj == N_axes//2:
                     ax.text(-0.5, 0.5, 'U_phi', transform=ax.transAxes)
         
-        pdb.set_trace()
-        
         return
     
     # Make some summary plots of results...
@@ -97,16 +108,17 @@ class Suite:
     
     # Loop through each dataset for each test function.
     def run(self):
+        self.setup_dirs()
+        
         for key in self.test_funcs.keys():
             func = self.test_funcs[key]
             for ds in self.datasets:
                 if key == 'remove_quadrupole_rstokes':
                     self.func_kwargs[key]['path_fn'] = self.input_files[ds]["rstokesdc_nosub"]
+                    self.func_kwargs[key]['save'] = self.output_dir + "{}/{}_quadsub.fits".format(ds, os.path.splitext(os.path.split(self.input_files[ds]['rstokesdc_nosub'])[-1])[0])
                 func(**self.func_kwargs[key])
-                # pdb.set_trace()
         
         return
-
 
 
 if __name__ == "__main__":
@@ -123,39 +135,45 @@ if __name__ == "__main__":
     input_files = {}
     # HD 32297 input.
     input_files.update(HD_32297={
-                    "podc_nosub":sorted(glob.glob(data_path + "HD_32297/*_podc_distorcorr.fits")),
-                    "stokesdc_nosub":data_path + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc.fits",
-                    "rstokesdc_nosub":data_path + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc.fits"})
-                    # "stokesdc_nosub":data_path + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc_sm0_stpol1-3.fits",
-                    # "rstokesdc_nosub":data_path + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc_sm0_stpol1-3.fits"})
+                    "podc_nosub":sorted(glob.glob(base_dir + "HD_32297/*_podc_distorcorr.fits")),
+                    "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc.fits",
+                    "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc.fits"})
+                    # "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc_sm0_stpol1-3.fits",
+                    # "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc_sm0_stpol1-3.fits"})
     # CE Ant input
     input_files.update(CE_Ant={
-                    "podc_nosub":sorted(glob.glob(data_path + "CE_Ant/*_podc_distorcorr.fits")),
-                    "stokesdc_nosub":data_path + "CE_Ant/S20180405S0070_podc_distorcorr_stokesdc_sm1_stpol13-15.fits",
-                    "rstokesdc_nosub":data_path + "CE_Ant/S20180405S0070_podc_distorcorr_rstokesdc_sm1_stpol13-15.fits"})
+                    "podc_nosub":sorted(glob.glob(base_dir + "CE_Ant/*_podc_distorcorr.fits")),
+                    "stokesdc_nosub":base_dir + "CE_Ant/S20180405S0070_podc_distorcorr_stokesdc_sm1_stpol13-15.fits",
+                    "rstokesdc_nosub":base_dir + "CE_Ant/S20180405S0070_podc_distorcorr_rstokesdc_sm1_stpol13-15.fits"})
     input_files.update({'73_Her':{
-                    "podc_nosub":sorted(glob.glob(data_path + "73_Her/*_podc_distorcorr.fits")),
-                    "stokesdc_nosub":data_path + "73_Her/S20170809S0103_podc_distorcorr_stokesdc.fits",
-                    "rstokesdc_nosub":data_path + "73_Her/S20170809S0103_podc_distorcorr_rstokesdc.fits"}})
+                    "podc_nosub":sorted(glob.glob(base_dir + "73_Her/*_podc_distorcorr.fits")),
+                    "stokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_stokesdc.fits",
+                    "rstokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_rstokesdc.fits"}})
     
-    # Tuple of functions we are going to run on the test data.
+    # Dict of functions we are going to run on the test data.
     test_funcs = {"remove_quadrupole_rstokes":pol_tools.remove_quadrupole_rstokes}
     
     theta_bounds = (0., np.pi)
     
+    # Dict of keyword arguments to feed into the funcs in the test_funcs dict.
+    # Make sure the dict keys match between the two dicts.
     func_kwargs = {}
     func_kwargs.update(remove_quadrupole_rstokes={"path_fn":None, "dtheta0":np.pi/2.,
                                 "C0":-3., "do_fit":True,
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
-                                "octo":False, "scale_by_r":False, "save":False,
+                                "octo":False, "scale_by_r":False, "save":True,
                                 "figNum":80, "show_region":True, "path_fn_stokes":None})
     
-    
+    # Create the test suite object.
     suite = Suite(test_funcs, func_kwargs, datasets, input_files)
     
     # Run the functions on the test datasets.
     suite.run()
+    # Plot the output.
     suite.plot_output()
+    # Eventually, do some analysis on the output....
     
+    
+    # Pause before exiting. Enter 'c' to end the script.
     pdb.set_trace()
     
