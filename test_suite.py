@@ -58,8 +58,6 @@ class Suite:
     # Plot Qphi and Uphi output for the control data and various test functions.
     def plot_rstokes(self):
         fontSize = 14
-        wdw_x = 
-        wdw_y = 
         for ii, ds in enumerate(self.datasets):
             ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
             vmax = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 99.)
