@@ -15,11 +15,12 @@ import pdb
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
+from scipy.stats import binned_statistic
 
 
 def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
                               theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
-                              octo=False, scale_by_r=False, save=False, figNum=80):
+                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
     """
     Subtract instrumental quadrupole signal from GPI radial Stokes cubes.
     
@@ -35,6 +36,12 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         scale_by_r: bool, True to scale quadrupole by 1/radius instead of total intensity.
         save: bool, True to write the quadrupole-subtracted FITS and a summary figure.
         figNum: int, number of matplotlib figure.
+        
+        NEW OPTIONS
+        quad_scale: Choice of radial scaling (None: med(I), I: I, U_abs: absolute value of U after subtracting median,
+        U_div: divided by pole to fit radial profile, then refit, U_pos: Only keep positive of pole, 
+        then fit radial profile and refit pole
+        pos_pole: choice of pole function (1: range from 0 to 1, 2: negatives = 0, else: -1 to 1)
     
     Outputs:
         If save is True, writes a new FITS file containing the quadrupole-subtracted
@@ -42,8 +49,15 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     """
     from matplotlib.colors import SymLogNorm
     
-    def quad(phi, dtheta, pole=2):
-        return np.sin(pole*(phi + dtheta))
+    def quad(phi, dtheta, pole=2, pos_pole=False):
+        if pos_pole == 1:
+            return (np.sin(pole*(phi + dtheta))+1)/2
+        elif pos_pole == 2:
+            sine = np.sin(pole*(phi + dtheta))
+            sine[sine < 0] = 0
+            return sine
+        else:
+            return np.sin(pole*(phi + dtheta))
     
     def residuals(pl, im, pole, quad_scaling, phi, theta_bounds):
         # Apply prior penalty to restrict dtheta.
@@ -51,7 +65,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             pen = 1e3
         else:
             pen = 1.
-        return pen*np.nansum((im - (10**pl[1]*quad(phi, pl[0], pole)*quad_scaling))**2)
+        return pen*np.nansum((im - (10**pl[1]*quad(phi, pl[0], pole, pos_pole)*quad_scaling))**2)
     
     star = np.array([140, 140])
     
@@ -73,13 +87,19 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         Qr[star[0], star[1]] = np.nanmean(Qr[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
     radii = make_radii(Qr, star)
     phi = make_phi(Qr, star)
+    
     # Make an azimuthal median map of the I signal for quadrupole scaling map.
-    I_radmedian = get_ann_stdmap(I, star, radii, r_max=None, mask_edges=False, use_median=True)
+    # Also get radial and azimuthal profile of I for plotting
+    I_radmedian, rprof_I, az_prof_I = get_ann_stdmap(I, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+    plot_profiles(rprof_I, az_prof_I, 'Total Intensity Profiles')
+    
     # Set the (primarily radial) scaling of the quadrupole.
     if scale_by_r:
         quad_scaling = 1/radii
     else:
         quad_scaling = I_radmedian
+
+    
     
     # Quadrupole or octopole?
     if octo:
@@ -103,6 +123,9 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     Qr_clipped = Qr.copy()
     Qr_clipped[(Qr <= np.percentile(np.nan_to_num(Qr), 0.003)) | (Qr >= np.percentile(np.nan_to_num(Ur), 99.994))] = np.nan
 
+    # Get Ur radial and azimuthal profiles and plot
+    Ur_med, Ur_rprof, Ur_aprof = get_ann_stdmap(Ur_clipped, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+    plot_profiles(Ur_rprof, Ur_aprof, 'Ur Profiles')
     
     # Mean background in masked Ur.
     Ur_bg_mean = np.nanmean(Ur_clipped*mask_fit)
@@ -115,7 +138,22 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     linscale = 1.
     fontSize = plt.rcParams.get('font.size')
     
-    # Perform the fit.
+    # Beginning of NEW Quad Scale options
+    # Just I im, rather than median profile of I
+    if quad_scale == 'I':
+        quad_scaling = I
+    # Find radial profile using absolute value of Ur
+    elif quad_scale == 'U_abs':
+        Ur_absolute = np.absolute(Ur_clipped-Ur_bg_mean)
+        plt.imshow(Ur_absolute,vmin=np.nanpercentile(Ur_absolute,5), vmax=np.nanpercentile(Ur_absolute,95))
+        plt.colorbar()
+        plt.show()
+        quad_scaling, rprof = get_ann_stdmap(Ur_absolute, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        plt.imshow(quad_scaling,vmin=np.nanpercentile(quad_scaling,5), vmax=np.nanpercentile(quad_scaling,95))
+        plt.colorbar()
+        plt.show()
+    
+    # Perform the fit. (First fit if it being done twice)
     p0 = np.array([dtheta0, C0])
     
     if do_fit:
@@ -125,11 +163,65 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     else:
         pf = p0
     
-    quad_bf = 10**pf[1]*quad(phi, pf[0], pole)*quad_scaling
+    # MORE Quad Scale options where pole fitting is done again
+    # Find radial profile by dividing first fit, clipping extremes
+    if quad_scale == 'U_div':
+        quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) 
+        quad_bf = quad_bf / np.nanmax(quad_bf)  
+        plt.imshow(quad_bf)
+        plt.colorbar()
+        plt.show()
+        quad_Ur_scalefit = Ur_clipped / quad_bf
+        quad_Ur_scalefit[quad_Ur_scalefit > np.nanpercentile(quad_Ur_scalefit, 98)] = np.nan # Clip divide by zeros
+        quad_Ur_scalefit[quad_Ur_scalefit < 0] = np.nan  # Negatives aren't helpful
+        plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
+        plt.colorbar()
+        plt.show()
+        quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        plt.imshow(quad_scaling)
+        plt.colorbar()
+        plt.show()
+        
+        if do_fit:
+            from scipy.optimize import fmin
+            output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
+                          full_output=1, disp=1)
+            pf = output[0]
+        else:
+            pf = p0
+    # Find radial profile by only keeping positive of previous pole fit, then fit again
+    elif quad_scale == 'U_pos':
+        quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) # Raw pole shape
+        quad_bf[quad_bf < np.nanpercentile(quad_bf,90)] = np.nan  # Mask negatives
+        quad_Ur_scalefit = Ur_clipped * quad_bf
+        plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
+        plt.colorbar()
+        plt.show()
+        quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        plt.imshow(quad_scaling)
+        plt.colorbar()
+        plt.show()
+        
+
+        if do_fit:
+            from scipy.optimize import fmin
+            output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
+                          full_output=1, disp=1)
+            pf = output[0]
+        else:
+            pf = p0
+
+    quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole)*quad_scaling
+    
+    # Get and plot the fit profiles to compare with I and Ur profiles
+    scaling_med, scaling_rprof = get_ann_stdmap(quad_scaling, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+    quad_med, quad_rprof, quad_aprof = get_ann_stdmap(quad_bf, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+    plot_profiles(scaling_rprof, quad_aprof, 'Pole Profiles')
+    
     res_bf = Ur_clipped - quad_bf
     red_chi2_Ur = np.nansum((mask_fit*res_bf - Ur_bg_mean)**2)/(np.where(~np.isnan(mask_fit*res_bf))[0].shape[0] - 2)
     print("Reduced Chi2 Ur = %.3e" % red_chi2_Ur)
-    quad_bf_rotQr = 10**pf[1]*quad(phi, pf[0] + dtheta_Qr, pole)*quad_scaling
+    quad_bf_rotQr = 10**pf[1]*quad(phi, pf[0] + dtheta_Qr, pole, pos_pole)*quad_scaling
     quad_bf_rotQr[radii <= 8.6] = 0.
     Qr_sub = Qr - quad_bf_rotQr
     Qr_sub_res = Qr_clipped - quad_bf_rotQr
@@ -164,10 +256,10 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
                norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
     plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
     for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
-        ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
-        ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
-        ax.set_xticklabels(range(-100, 101, 100))
-        ax.set_yticklabels(range(-100, 101, 100))
+        ax.set_xticks(range(star[1] - 150, star[1] + 151, 100))
+        ax.set_yticks(range(star[0] - 150, star[0] + 151, 100))
+        ax.set_xticklabels(range(-150, 151, 100))
+        ax.set_yticklabels(range(-150, 151, 100))
     for ax in [ax0, ax1, ax2]:
         ax.set_xticklabels("")
     for ax in [ax1, ax2, ax4, ax5]:
@@ -190,12 +282,12 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         new_hdu[1].header['QUADAMP'] = ("%.3e" % 10**pf[1], "Amplitude of instr. quadrupole")
         
         try:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"))
+            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), overwrite=True)
         except fits.verify.VerifyError:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), output_verify='fix+warn')
+            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), output_verify='fix+warn', overwrite=True)
         
         if len(path_fn.split('/')) == 1:
-            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
+            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=False, format='png')
         else:
             fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
     
@@ -644,7 +736,36 @@ def make_phi(arr, cen):
     return phi
 
 
-def get_ann_stdmap(im, cen, radii, r_max=None, mask_edges=False,
+def plot_profiles(rprof, az_prof, title):
+    fig, ax = plt.subplots(2,2, figsize=(8,8))
+    fig.suptitle(title, fontsize=18)
+    
+    ax[0,0].plot(rprof[0], rprof[1])
+    ax[0,0].set_title('Radial Profile')
+    ax[0,0].set_xlabel('Radius (px)')
+    ax[0,0].set_ylabel('Counts')
+    
+    ax[0,1].plot(az_prof[0][1], az_prof[0][2])
+    ax[0,1].set_title('Azimuthal Profile at Radius '+str(az_prof[0][0]))
+    ax[0,1].set_xlabel('Azimuth (deg)')
+    ax[0,1].set_ylabel('Counts')
+    
+    ax[1,0].plot(az_prof[1][1], az_prof[1][2])
+    ax[1,0].set_title('Azimuthal Profile at Radius '+str(az_prof[1][0]))
+    ax[1,0].set_xlabel('Azimuth (deg)')
+    ax[1,0].set_ylabel('Counts')
+    
+    ax[1,1].plot(az_prof[2][1], az_prof[2][2])
+    ax[1,1].set_title('Azimuthal Profile at Radius '+str(az_prof[2][0]))
+    ax[1,1].set_xlabel('Azimuth (deg)')
+    ax[1,1].set_ylabel('Counts')
+    
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
+    return
+            
+
+def get_ann_stdmap(im, cen, radii, phi=None, r_max=None, mask_edges=False,
 				   use_mean=False, use_median=False, rprof_out=False):
 	"""
 	Get standard deviation map from image im, measured in concentric annuli 
@@ -659,6 +780,7 @@ def get_ann_stdmap(im, cen, radii, r_max=None, mask_edges=False,
 		use_mean: if True, use mean instead of standard deviation.
 		use_median: if True, use median instead of standard deviation.
 		rprof_out: if True, also output the radial profile.
+		phi: if phi is not None, then azimuthal profiles will also be generated.      
 	"""
 	
 	if r_max==None:
@@ -700,8 +822,22 @@ def get_ann_stdmap(im, cen, radii, r_max=None, mask_edges=False,
 				val = np.nanstd(im[wr])
 				stdmap[wr] = val
 		rprof.append(val)
+	   
+	if phi is not None:
+		az_rad = np.linspace(10, r_max-40,4)
+		az_prof = []
+		for rr in az_rad:
+			wr = np.nonzero((radii >= int(rr)-2.5) & (radii < int(rr)+2.5))
+			bin_med, bin_edges, bin_num = binned_statistic(np.degrees(phi[wr]), im[wr], statistic='median', bins=36)
+			bin_width = (bin_edges[1] - bin_edges[0])
+			bin_centers = bin_edges[1:] - bin_width/2
+			#az_prof.append([int(rr),np.degrees(phi[wr]),im[wr]])
+			az_prof.append([int(rr),bin_centers, bin_med])
 	
-	if rprof_out:
+	
+	if rprof_out and phi is None:
 		return stdmap, [np.arange(0, r_max, 1), rprof]
+	elif rprof_out and phi is not None:
+		return stdmap, [np.arange(0, r_max, 1), rprof], az_prof
 	else:
 		return stdmap
