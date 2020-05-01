@@ -8,14 +8,20 @@
 #
 
 import os
+import shutil
 import warnings
+import time
 # warnings.simplefilter("ignore", ImportWarning)
 # warnings.simplefilter("ignore", RuntimeWarning)
 import pdb
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
+
 from scipy.stats import binned_statistic
+from xml.dom import minidom
+from glob import glob
+
 
 
 def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
@@ -91,7 +97,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Make an azimuthal median map of the I signal for quadrupole scaling map.
     # Also get radial and azimuthal profile of I for plotting
     I_radmedian, rprof_I, az_prof_I = get_ann_stdmap(I, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
-    plot_profiles(rprof_I, az_prof_I, 'Total Intensity Profiles')
+    #plot_profiles(rprof_I, az_prof_I, 'Total Intensity Profiles')
     
     # Set the (primarily radial) scaling of the quadrupole.
     if scale_by_r:
@@ -125,7 +131,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
 
     # Get Ur radial and azimuthal profiles and plot
     Ur_med, Ur_rprof, Ur_aprof = get_ann_stdmap(Ur_clipped, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
-    plot_profiles(Ur_rprof, Ur_aprof, 'Ur Profiles')
+    #plot_profiles(Ur_rprof, Ur_aprof, 'Ur Profiles')
     
     # Mean background in masked Ur.
     Ur_bg_mean = np.nanmean(Ur_clipped*mask_fit)
@@ -216,7 +222,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Get and plot the fit profiles to compare with I and Ur profiles
     scaling_med, scaling_rprof = get_ann_stdmap(quad_scaling, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
     quad_med, quad_rprof, quad_aprof = get_ann_stdmap(quad_bf, star, radii, phi=phi, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
-    plot_profiles(scaling_rprof, quad_aprof, 'Pole Profiles')
+    #plot_profiles(scaling_rprof, quad_aprof, 'Pole Profiles')
     
     res_bf = Ur_clipped - quad_bf
     red_chi2_Ur = np.nansum((mask_fit*res_bf - Ur_bg_mean)**2)/(np.where(~np.isnan(mask_fit*res_bf))[0].shape[0] - 2)
@@ -295,8 +301,9 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     return
 
 
-def remove_quadrupole_batch(path_list=None, path_dir=None, do_fit=True,
-                            dtheta0=0., C0=1., save=False, figNum=80):
+def remove_quadrupole_batch(path_list=None, path_dir=None, dtheta0=0., C0=2., do_fit=True,
+                              theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
+                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
     """
     Subtract quadrupole signal from a bunch of rstokes cubes. Just run
     remove_quadrupole_rstokes in a loop.
@@ -311,14 +318,120 @@ def remove_quadrupole_batch(path_list=None, path_dir=None, do_fit=True,
         path_list = paths[~np.array(wh_quad)]
         path_list = np.sort(path_list)
     
-    theta_bounds = (0., np.pi)
-    
     for ii, path_fn in enumerate(path_list):
         try:
             remove_quadrupole_rstokes(path_fn, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
-                              theta_bounds=theta_bounds, save=save, figNum=figNum)
+                                      theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r, 
+                                      save=save, figNum=figNum, quad_scale=quad_scale, pos_pole=pos_pole)
         except:
             print("Failed on %s" % path_fn)
+    
+    return
+
+
+def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, dtheta0=0., C0=2., do_fit=True,
+                              theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
+                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
+    """
+    Performs remove_quadrupole_rstokes on multiple rstokes files constructed from the minimum number of podc files (4), 
+    then combines the results
+    
+    !!! gpi-pipeline must be running for this function to work !!!
+    
+    Inputs:
+        path_fn: str, relative path to folder with podc files.
+        recipe_temp: str, relative path to recipe template.
+        queue_path: str, relative path to gpi-pipeline queue folder.
+        The rest of the inputs are the same as remove_quadrupole_rstokes.
+    
+    Outputs:
+        If save is True, writes a new FITS file containing the final quadrupole-subtracted
+        radial Stokes cube. 
+    """
+    
+    recipe_dir = path_fn+'/recipe_tmp/'
+    out_dir = path_fn+'/stokes_output/'
+    
+    podc_files = sorted(glob(path_fn+'*.fits'))
+    
+    try:
+        os.mkdir(out_dir)
+    except:
+        pass
+    try:
+        os.mkdir(recipe_dir)
+    except:
+        pass
+
+    # Get podc groups of 4 to convert to rstokes
+    num_g = int(np.floor((len(podc_files)/4)))
+    im_groups = [podc_files[i*4:i*4+4] for i in range(num_g)]
+    
+    # Recipe editing
+    name_base = recipe_temp.strip('/').split('/')[-1].replace('template_recipe','').replace('.xml','')
+    
+    for group in im_groups:
+        # Load recipe template
+        recipe_xml = minidom.parse(recipe_temp)
+
+        # Set input/output directory    
+        dataset = recipe_xml.getElementsByTagName('dataset')[0]
+        dataset.setAttribute('InputDir', path_fn)
+        dataset.setAttribute('OutputDir', out_dir)
+
+        # Add file names
+        for file in group:
+            fits_att = recipe_xml.createElement('fits')
+            fname = file.strip('/').split('/')[-1]
+            fits_att.setAttribute('FileName', fname)
+            recipe_xml.getElementsByTagName('dataset')[0].appendChild(fits_att)
+
+        # Get naming for new template and write
+        first_fname = group[0].strip('/').split('/')[-1].replace('.fits','')
+        last_fname = group[-1].strip('/').split('/')[-1].replace('.fits','')
+        pre_name = first_fname +'-' + last_fname
+        xml_out = pre_name+name_base+'.waiting.xml'
+        recipe_xml.writexml(open(recipe_dir+xml_out, 'w'))
+        recipe_xml.unlink()
+
+        shutil.move(recipe_dir+xml_out, queue_path+xml_out)
+    
+    # Allow time for recipes to finish
+    time.sleep(num_g*3)
+
+    # Remove quadrupoles
+    remove_quadrupole_batch(path_list=None, path_dir=out_dir, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
+                            theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r, 
+                            save=save, figNum=figNum, quad_scale=quad_scale, pos_pole=pos_pole)
+
+    # Gather subtracted rstokes and combine
+    sub_rstokes = glob(out_dir+'*rstokesdc_quadsub.fits')
+
+    hdu_master = fits.open(sub_rstokes[0])
+    data = hdu_master[1].data
+
+    I_images = np.empty((len(sub_rstokes), data[0].shape[0], data[0].shape[1]))
+    Qrsub_images = np.empty((len(sub_rstokes), data[1].shape[0], data[1].shape[1]))
+    Ursub_images = np.empty((len(sub_rstokes), data[2].shape[0], data[2].shape[1]))
+
+    for i, file in enumerate(sub_rstokes):
+        hdu = fits.open(file)
+        I_images[i] = hdu[1].data[0]
+        Qrsub_images[i] = hdu[1].data[1]
+        Ursub_images[i] = hdu[1].data[2]
+
+    I_mn_comb = np.mean(I_images, axis=0)
+    Qr_mn_comb = np.mean(Qrsub_images, axis=0)
+    Ur_mn_comb = np.mean(Ursub_images, axis=0)
+
+    new_hdu = hdu_master
+    new_data = data.copy()
+    new_data[0] = I_mn_comb
+    new_data[1] = Qr_mn_comb
+    new_data[2] = Ur_mn_comb
+    new_hdu[1].data = new_data.astype('float32')
+    new_hdu[1].header.add_history("Mean combined all subtracted frames")
+    new_hdu.writeto(out_dir+'mean_combined_rstokes_quadsub.fits')
     
     return
 
