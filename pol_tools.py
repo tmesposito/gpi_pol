@@ -38,7 +38,9 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         rout: outer radius of fit region; outside of this the image is masked [pix].
         octo: bool, True to subtract an octopole instead of a quadrupole.
         scale_by_r: bool, True to scale quadrupole by 1/radius instead of total intensity.
-        save: bool, True to write the quadrupole-subtracted FITS and a summary figure.
+        save: bool or str; str path to specify exact output path of the resulting
+            FITS and summary figure; True to write that output to the same directory
+            as the input file; False to not save any output.
         figNum: int, number of matplotlib figure.
         show_region: bool, True to outline the region used for the fit.
         path_fn_stokes: str, relative path to stokesdc FITS file if you want to
@@ -210,7 +212,6 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             new_hdu[1].header.add_history("Subtracted instrumental quadrupole * I radial prof.")
         new_hdu[1].header['QUADTHET'] = ("%.3f" % np.degrees(pf[0]), "Rotation angle of instr. quadrupole [degrees]")
         new_hdu[1].header['QUADAMP'] = ("%.3e" % 10**pf[1], "Amplitude of instr. quadrupole")
-        
         
         try:
             new_hdu.writeto(output_path, overwrite=True)

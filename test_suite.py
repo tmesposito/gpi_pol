@@ -36,6 +36,11 @@ class Suite:
         Initialization code for Suite object.
         
         Inputs:
+            test_funcs: dict
+            func_kwargs: dict
+            datasets: list
+            input_files: dict
+            test_id: str name ID for the test you are running.
             
         """
         
@@ -73,11 +78,18 @@ class Suite:
         fontSize = 14
         for ii, ds in enumerate(self.datasets):
             ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
+            for key in sorted(self.test_funcs.keys()):
+                try:
+                    if key == "remove_quadrupole_rstokes":
+                        fp = glob.glob(self.output_dir + ds + '/*_quadsub.fits')[0]
+                    ims.append(fits.getdata(fp))
+                except:
+                    ims.append(np.nan*np.ones(ims[0].shape))
             vmax = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 99.)
             # plt.figure(ii)
             # plt.clf()
             # plt.suptitle(self.input_files[ds]['rstokesdc_nosub'].split('/')[-1])
-            fig, ax_list = plt.subplots(2, 2, sharex='col',
+            fig, ax_list = plt.subplots(2, len(ims), sharex='col',
                                         gridspec_kw={'hspace': 0, 'wspace': 0})
             plt.suptitle(ds, fontsize=fontSize+2)
             N_axes = ax_list.size
@@ -86,6 +98,13 @@ class Suite:
             ax_list[0][0].set_title('No Sub', fontsize=fontSize)
             # Uphi
             ax_list[1][0].imshow(ims[0][2], vmin=0, vmax=vmax)
+            
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                ax_list[0][kk+1].imshow(im[1], vmin=0, vmax=vmax)
+                ax_list[0][kk+1].set_title(key, fontsize=fontSize)
+                ax_list[1][kk+1].imshow(im[2], vmin=0, vmax=vmax)
+            
             plt.draw()
             
             # ax_list = [ax0, ax1]
@@ -126,21 +145,23 @@ if __name__ == "__main__":
     # The test data sets we are using.
     # HD 32297: high SNR edge-on disk with moderate instrumental noise
     # CE Ant: medium SNR face-on disk with weak instrumental noise
-    # NEED: low SNR disk with moderate instrumental noise
+    # HD 191089: low SNR disk with moderate instrumental noise (octopole)
     # 73 Her: non-detection with moderate, octopole instrumental noise
-    # NEED: non-detection with weak instrumental noise
-    datasets = ["HD_32297", "CE_Ant", "73_Her"]
+    # HD 7112: non-detection with weak instrumental noise (light quadrupole)
+    datasets = ["HD_32297", "HD_191089", "CE_Ant", "73_Her", "HD_7112"]
     
     # The input data files we are using, by data set.
     input_files = {}
-    # HD 32297 input.
     input_files.update(HD_32297={
                     "podc_nosub":sorted(glob.glob(base_dir + "HD_32297/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc.fits",
                     "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc.fits"})
                     # "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc_sm0_stpol1-3.fits",
                     # "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc_sm0_stpol1-3.fits"})
-    # CE Ant input
+    input_files.update(HD_191089={
+                    "podc_nosub":sorted(glob.glob(base_dir + "HD_191089/*_podc_distorcorr.fits")),
+                    "stokesdc_nosub":base_dir + "HD_191089/S20150901S0340_podc_distorcorr_stokesdc_sm1_stpol7-13.fits",
+                    "rstokesdc_nosub":base_dir + "HD_191089/S20150901S0340_podc_distorcorr_rstokesdc_sm1_stpol7-13.fits"})
     input_files.update(CE_Ant={
                     "podc_nosub":sorted(glob.glob(base_dir + "CE_Ant/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "CE_Ant/S20180405S0070_podc_distorcorr_stokesdc_sm1_stpol13-15.fits",
@@ -149,7 +170,11 @@ if __name__ == "__main__":
                     "podc_nosub":sorted(glob.glob(base_dir + "73_Her/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_stokesdc.fits",
                     "rstokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_rstokesdc.fits"}})
-    
+    input_files.update(HD_7112={
+                    "podc_nosub":sorted(glob.glob(base_dir + "HD_7112/*_podc_distorcorr.fits")),
+                    "stokesdc_nosub":base_dir + "HD_7112/S20181121S0094_podc_distorcorr_stokesdc.fits",
+                    "rstokesdc_nosub":base_dir + "HD_7112/S20181121S0094_podc_distorcorr_rstokesdc.fits"})
+        
     # Dict of functions we are going to run on the test data.
     test_funcs = {"remove_quadrupole_rstokes":pol_tools.remove_quadrupole_rstokes}
     
@@ -175,5 +200,5 @@ if __name__ == "__main__":
     
     
     # Pause before exiting. Enter 'c' to end the script.
-    pdb.set_trace()
+    # pdb.set_trace()
     
