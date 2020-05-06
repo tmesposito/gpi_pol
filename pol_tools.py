@@ -30,8 +30,9 @@ from glob import glob
 
 def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
                               theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
-                              octo=False, scale_by_r=False, save=False, figNum=80
-                              , path_fn_stokes=None):
+                              octo=False, scale_by_r=False, save=False, figNum=80,
+                              show_region=True, path_fn_stokes=None,
+                              quad_scale=None, pos_pole=False):
     """
     Subtract instrumental quadrupole signal from GPI radial Stokes cubes.
     
@@ -45,14 +46,21 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         rout: outer radius of fit region; outside of this the image is masked [pix].
         octo: bool, True to subtract an octopole instead of a quadrupole.
         scale_by_r: bool, True to scale quadrupole by 1/radius instead of total intensity.
-        save: bool, True to write the quadrupole-subtracted FITS and a summary figure.
+        save: bool or str; str path to specify exact output path of the resulting
+            FITS and summary figure; True to write that output to the same directory
+            as the input file; False to not save any output.
         figNum: int, number of matplotlib figure.
-        
-        NEW OPTIONS
-        quad_scale: Choice of radial scaling (None: med(I), I: I, U_abs: absolute value of U after subtracting median,
-        U_div: divided by pole to fit radial profile, then refit, U_pos: Only keep positive of pole, 
-        then fit radial profile and refit pole
-        pos_pole: choice of pole function (1: range from 0 to 1, 2: negatives = 0, else: -1 to 1)
+        show_region: bool, True to outline the region used for the fit.
+        path_fn_stokes: str, relative path to stokesdc FITS file if you want to
+            subtract instrumental polarization from Q and U as well.
+        quad_scale: Choice of radial scaling:
+            None: med(I)
+            I: I
+            U_abs: absolute value of U after subtracting median
+            U_div: divided by pole to fit radial profile, then refit
+            U_pos: Only keep positive of pole, then fit radial profile and refit pole
+        pos_pole: choice of pole function (1: range from 0 to 1, 2: negatives = 0,
+            else: -1 to 1)
     
     Outputs:
         If save is True, writes a new FITS file containing the quadrupole-subtracted
@@ -107,6 +115,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Replace the star center pixel value so it is not NaN in Qr.
     if np.isnan(Qr[star[0], star[1]]):
         Qr[star[0], star[1]] = np.nanmean(Qr[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
+        Ur[star[0], star[1]] = np.nanmean(Ur[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
     radii = make_radii(Qr, star)
     phi = make_phi(Qr, star)
     
@@ -156,7 +165,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     vmax_Ur = 4*np.percentile(np.nan_to_num(Ur[100:180, 100:180]), 99.) # np.nanmax(Ur)
     vmin_Qr = 4*np.percentile(np.nan_to_num(Qr[100:180, 100:180]), 1.) #np.nanmin(Ur)
     vmax_Qr = 4*np.percentile(np.nan_to_num(Qr[100:180, 100:180]), 99.) # np.nanmax(Ur)
-    linthresh = 0.1 #2e-9
+    linthresh = np.abs(vmin_Ur)/50. # 0.1 #2e-9
     linscale = 1.
     fontSize = plt.rcParams.get('font.size')
     
@@ -289,12 +298,15 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     ax5.imshow(quad_bf_rotQr, vmin=vmin_Qr, vmax=vmax_Qr,
                norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
     plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
-    for ax in [ax1, ax2]:
-        in_circle = plt.Circle(star, rin, fill=False, facecolor='None', edgecolor='0.8', linestyle='--', linewidth=2)
-        out_circle = plt.Circle(star, rout, fill=False, facecolor='None', edgecolor='0.8', linestyle='--', linewidth=2)
-        ax.add_artist(in_circle)
-        ax.add_artist(out_circle)
+    if show_region:
+        for ax in [ax1, ax2]:
+            in_circle = plt.Circle(star, rin, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
+            out_circle = plt.Circle(star, rout, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
+            ax.add_artist(in_circle)
+            ax.add_artist(out_circle)
     for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
+        fpm_circle = plt.Circle(star, 8.6, fill=False, facecolor='None', edgecolor='r', alpha=0.5, linestyle='-', linewidth=1)
+        ax.add_artist(fpm_circle)
         ax.set_xticks(range(star[1] - 150, star[1] + 151, 100))
         ax.set_yticks(range(star[0] - 150, star[0] + 151, 100))
         ax.set_xticklabels(range(-150, 151, 100))
@@ -306,128 +318,12 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # plt.tight_layout()
     plt.draw()
     
-# TEMP!!! Subtract instrumental pol from Q and U.
-    hdu_st = fits.open(os.path.expanduser(path_fn_stokes))
-    data_st = hdu_st[1].data
-    Q = data_st[1]
-    U = data_st[2]
-    # Replace the star center pixel value so it is not NaN in Qr.
-    if np.isnan(Q[star[0], star[1]]):
-        Q[star[0], star[1]] = np.nanmean(Q[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
-        U[star[0], star[1]] = np.nanmean(U[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
-    
-    rin_st = 50 #65
-    rout_st = 80 #75
-    I_scale_st = I_radmedian/I_radmedian[int(np.median(range(rin_st, rout_st+1)))]
-    mask_st = (radii > rin_st) & (radii < rout_st)
-    Q_3sig_lo = np.percentile(np.nan_to_num(Q[mask_st]), 16.)
-    Q_3sig_up = np.percentile(np.nan_to_num(Q[mask_st]), 84.)
-    Q_mask = np.ones(Q.shape)
-    Q_mask[mask_st] = 0
-    Q_mask[Q < Q_3sig_lo] = 1
-    Q_mask[Q > Q_3sig_up] = 1
-    Q_masked = np.ma.masked_array(Q.copy(), mask=Q_mask)
-    U_3sig_lo = np.percentile(np.nan_to_num(U[mask_st]), 16.)
-    U_3sig_up = np.percentile(np.nan_to_num(U[mask_st]), 84.)
-    U_mask = np.ones(U.shape)
-    U_mask[mask_st] = 0
-    U_mask[U < U_3sig_lo] = 1
-    U_mask[U > U_3sig_up] = 1
-    U_masked = np.ma.masked_array(U.copy(), mask=U_mask)
-    
-    Q_med = np.nanmedian(Q_masked.compressed())
-    U_med = np.nanmedian(U_masked.compressed())
-    
-    Q_sub = Q - Q_med*I_scale_st
-    U_sub = U - U_med*I_scale_st
-    res_U_bf = U_sub
-    
-    from gpi_process import get_radial_stokes
-    Qr_medsub, Ur_medsub = get_radial_stokes(Q_sub, U_sub, phi)
-    
-    
-# TEMP!!! Plot Q and U
-    vmin_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 1.) #np.nanmin(U)
-    vmax_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 99.) # np.nanmax(U)
-    vmin_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 1.) #np.nanmin(U)
-    vmax_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 99.) # np.nanmax(U)
-    linthresh = 0.1 #2e-9
-    linscale = 1.
-    
-    fig1 = plt.figure(figNum+1, figsize=(8, 6))
-    fig1.clf()
-    fig1.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
-    ax0 = fig1.add_subplot(231)
-    ax0.imshow(U, vmin=vmin_U, vmax=vmax_U,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
-    ax0.set_ylabel("U", rotation=0)
-    ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
-    ax1 = fig1.add_subplot(232)
-    ax1.imshow(res_U_bf, vmin=vmin_U, vmax=vmax_U,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
-    ax1.text(0.05, 0.95, "Data$-$Median", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
-    ax2 = fig1.add_subplot(233)
-    ax2.imshow(U_masked, vmin=vmin_U, vmax=vmax_U,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
-    ax2.text(0.05, 0.95, "ROI", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
-    ax3 = fig1.add_subplot(234)
-    ax3.imshow(Q, vmin=vmin_Q, vmax=vmax_Q,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
-    ax3.set_ylabel("Q", rotation=0)
-    ax4 = fig1.add_subplot(235)
-    ax4.imshow(Q_sub, vmin=vmin_Q, vmax=vmax_Q,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
-    ax5 = fig1.add_subplot(236)
-    ax5.imshow(Q_masked, vmin=vmin_Q, vmax=vmax_Q,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
-    plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
-    for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
-        ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
-        ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
-        ax.set_xticklabels(range(-100, 101, 100))
-        ax.set_yticklabels(range(-100, 101, 100))
-    for ax in [ax0, ax1, ax2]:
-        ax.set_xticklabels("")
-    for ax in [ax1, ax2, ax4, ax5]:
-        ax.set_yticklabels("")
-    # plt.tight_layout()
-    plt.draw()
-    
-    fig2 = plt.figure(figNum+2, figsize=(6., 6))
-    fig2.clf()
-    # fig2.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
-    ax0 = fig2.add_subplot(221)
-    ax0.imshow(Ur_medsub, vmin=vmin_Ur, vmax=vmax_Ur,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
-    ax0.set_ylabel("U$_\\phi$", rotation=0)
-    ax0.text(0.05, 0.95, "Stokes sub", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
-    ax1 = fig2.add_subplot(222)
-    ax1.imshow(res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
-    ax1.text(0.05, 0.95, "$\phi$ sub", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
-    ax2 = fig2.add_subplot(223)
-    ax2.imshow(Qr_medsub, vmin=vmin_Qr, vmax=vmax_Qr,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
-    ax2.set_ylabel("Q$_\\phi$", rotation=0)
-    # ax2.text(0.05, 0.95, "$\phi$ sub", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
-    ax3 = fig2.add_subplot(224)
-    ax3.imshow(Qr_sub, vmin=vmin_Qr, vmax=vmax_Qr,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
-    plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.15, hspace=0.05, wspace=0.05)
-    for ax in [ax0, ax1, ax2, ax3]:
-        ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
-        ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
-        ax.set_xticklabels(range(-100, 101, 100))
-        ax.set_yticklabels(range(-100, 101, 100))
-    for ax in [ax0, ax1]:
-        ax.set_xticklabels("")
-    for ax in [ax1, ax3]:
-        ax.set_yticklabels("")
-    # plt.tight_layout()
-    plt.draw()
-    
     # Optionally write a new FITS cube and figure for the subtracted images.
     if save:
+        if save is True:
+            output_path = os.path.expanduser(os.path.splitext(path_fn)[0]) + "_quadsub.fits"
+        else:
+            output_path = save
         new_hdu = hdu
         new_data = data.copy()
         new_data[1] = Qr_sub
@@ -452,16 +348,205 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             scale_name = quad_scale
         
         try:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_" + scale_name + "_quadsub.fits"), overwrite=True)
+            new_hdu.writeto(output_path, overwrite=True)
         except fits.verify.VerifyError:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_" + scale_name + "_quadsub.fits"), output_verify='fix+warn', overwrite=True)
+            new_hdu.writeto(output_path, output_verify='fix+warn', overwrite=True)
+        except OSError as ee:
+            print(ee)
+            print("WARNING: Not saving quadrupole-subtracted FITS file (see error above).")
         
-        if len(path_fn.split('/')) == 1:
-            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + "_" + scale_name + '.png', dpi=300, transparent=False, format='png')
-        else:
-            fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + "_" + scale_name + '.png'), dpi=300, transparent=True, format='png')
+        # pdb.set_trace()
+        # if len(path_fn.split('/')) == 1:
+        #     fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
+        # else:
+        #     fig0.savefig(os.path.split(os.path.expanduser(path_fn))[0] + , dpi=300, transparent=True, format='png')
+        #     fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
+        fig0.savefig(os.path.splitext(output_path)[0] + '.png', dpi=300, transparent=False, format='png')
     
-    pdb.set_trace()
+# TEMP!!! Subtract instrumental pol from Q and U.
+    if path_fn_stokes is not None:
+        hdu_st = fits.open(os.path.expanduser(path_fn_stokes))
+        data_st = hdu_st[1].data
+        Q = data_st[1]
+        U = data_st[2]
+        # Replace the star center pixel value so it is not NaN in Qr.
+        if np.isnan(Q[star[0], star[1]]):
+            Q[star[0], star[1]] = np.nanmean(Q[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
+            U[star[0], star[1]] = np.nanmean(U[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
+        
+        rin_st = 50 #65
+        rout_st = 80 #75
+        I_scale_st = I_radmedian/I_radmedian[int(np.median(range(rin_st, rout_st+1)))]
+        mask_st = (radii > rin_st) & (radii < rout_st)
+        Q_sig_lo = np.percentile(np.nan_to_num(Q[mask_st]), 15.87)
+        Q_sig_up = np.percentile(np.nan_to_num(Q[mask_st]), 84.14)
+        Q_mask = np.ones(Q.shape)
+        Q_mask[mask_st] = 0
+        Q_mask[Q < Q_sig_lo] = 1
+        Q_mask[Q > Q_sig_up] = 1
+        Q_masked = np.ma.masked_array(Q.copy(), mask=Q_mask)
+        U_sig_lo = np.percentile(np.nan_to_num(U[mask_st]), 15.87)
+        U_sig_up = np.percentile(np.nan_to_num(U[mask_st]), 84.14)
+        U_mask = np.ones(U.shape)
+        U_mask[mask_st] = 0
+        U_mask[U < U_sig_lo] = 1
+        U_mask[U > U_sig_up] = 1
+        U_masked = np.ma.masked_array(U.copy(), mask=U_mask)
+        
+        Q_med = np.nanmedian(Q_masked.compressed())
+        U_med = np.nanmedian(U_masked.compressed())
+        
+        def residuals_st(pl, im, st_scaling, phi):
+            return np.nansum((im - (10**pl[0]*st_scaling))**2)
+        
+        p0_st = [-4.]
+        if do_fit:
+            from scipy.optimize import fmin
+            output = fmin(residuals_st, p0_st, (U_masked, quad_scaling, phi), full_output=1, disp=1)
+            pf_st = output[0]
+        else:
+            pf_st = p0_st
+        
+        Q_sub = Q - Q_med*I_scale_st
+        # U_sub = U - U_med*I_scale_st
+        U_sub = U - (10**pf_st[0])*quad_scaling
+        res_U_bf = U_sub
+        
+        Qr_medsub, Ur_medsub = get_radial_stokes(Q_sub, U_sub, phi)
+        
+        
+    # TEMP!!! Plot Q and U
+        vmin_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 1.) #np.nanmin(U)
+        vmax_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 99.) # np.nanmax(U)
+        vmin_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 1.) #np.nanmin(U)
+        vmax_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 99.) # np.nanmax(U)
+        linthresh = 0.1 #2e-9
+        linscale = 1.
+        
+        fig1 = plt.figure(figNum+1, figsize=(8, 6))
+        fig1.clf()
+        fig1.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
+        ax0 = fig1.add_subplot(231)
+        ax0.imshow(U, vmin=vmin_U, vmax=vmax_U,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+        ax0.set_ylabel("U", rotation=0)
+        ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
+        ax1 = fig1.add_subplot(232)
+        ax1.imshow(res_U_bf, vmin=vmin_U, vmax=vmax_U,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+        ax1.text(0.05, 0.95, "Data$-$Median", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
+        ax2 = fig1.add_subplot(233)
+        ax2.imshow(U_masked, vmin=vmin_U, vmax=vmax_U,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+        ax2.text(0.05, 0.95, "ROI", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
+        ax3 = fig1.add_subplot(234)
+        ax3.imshow(Q, vmin=vmin_Q, vmax=vmax_Q,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+        ax3.set_ylabel("Q", rotation=0)
+        ax4 = fig1.add_subplot(235)
+        ax4.imshow(Q_sub, vmin=vmin_Q, vmax=vmax_Q,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+        ax5 = fig1.add_subplot(236)
+        ax5.imshow(Q_masked, vmin=vmin_Q, vmax=vmax_Q,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+        plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
+        for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
+            ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
+            ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
+            ax.set_xticklabels(range(-100, 101, 100))
+            ax.set_yticklabels(range(-100, 101, 100))
+        for ax in [ax0, ax1, ax2]:
+            ax.set_xticklabels("")
+        for ax in [ax1, ax2, ax4, ax5]:
+            ax.set_yticklabels("")
+        # plt.tight_layout()
+        plt.draw()
+        
+        fig2 = plt.figure(figNum+2, figsize=(6., 6))
+        fig2.clf()
+        # fig2.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
+        ax0 = fig2.add_subplot(221)
+        ax0.imshow(Ur_medsub, vmin=vmin_Ur, vmax=vmax_Ur,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
+        ax0.set_ylabel("U$_\\phi$", rotation=0)
+        ax0.text(0.05, 0.95, "Stokes Median sub", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
+        ax1 = fig2.add_subplot(222)
+        ax1.imshow(res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
+        ax1.text(0.05, 0.95, "$\phi$ Quad sub", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
+        ax2 = fig2.add_subplot(223)
+        ax2.imshow(Qr_medsub, vmin=vmin_Qr, vmax=vmax_Qr,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
+        ax2.set_ylabel("Q$_\\phi$", rotation=0)
+        # ax2.text(0.05, 0.95, "$\phi$ sub", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
+        ax3 = fig2.add_subplot(224)
+        ax3.imshow(Qr_sub, vmin=vmin_Qr, vmax=vmax_Qr,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
+        plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.15, hspace=0.05, wspace=0.05)
+        for ax in [ax0, ax1, ax2, ax3]:
+            ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
+            ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
+            ax.set_xticklabels(range(-100, 101, 100))
+            ax.set_yticklabels(range(-100, 101, 100))
+        for ax in [ax0, ax1]:
+            ax.set_xticklabels("")
+        for ax in [ax1, ax3]:
+            ax.set_yticklabels("")
+        # plt.tight_layout()
+        plt.draw()
+        
+        # Plot azimuthal profiles to check instr. pol subtraction performance.
+        fig3 = plt.figure(figNum+3)
+        fig3.clf()
+        ax0 = fig3.add_subplot(111)
+        import matplotlib.cm as cm
+        from scipy.ndimage.filters import gaussian_filter1d
+        cmap = cm.plasma
+        sm_sigma = 20
+        for ii, rr in enumerate(range(rin, rout+1, 45)):
+            cc = cmap(float(ii)/len(range(rin, rout+1, 45)))
+            r_cond = (radii > rr-0.5) & (radii < rr+0.5)
+            # pdb.set_trace()
+            phi_sort = np.argsort(phi[r_cond])
+            ax0.plot(gaussian_filter1d(phi[r_cond][phi_sort], sm_sigma), gaussian_filter1d(res_bf[r_cond][phi_sort], sm_sigma), c=cc, linestyle='-', label='r=' + str(rr))
+            ax0.plot(gaussian_filter1d(phi[r_cond][phi_sort], sm_sigma), gaussian_filter1d(Ur_medsub[r_cond][phi_sort], sm_sigma), c=cc, linestyle='--')
+            ax0.plot(gaussian_filter1d(phi[r_cond][phi_sort], sm_sigma), gaussian_filter1d(Ur_clipped[r_cond][phi_sort], sm_sigma), c=cc, linestyle=':')
+            ax0.axhline(y=np.nanmedian(Ur_clipped[r_cond]), color=cc, linestyle='-.')
+        ax0.set_xlabel('theta')
+        ax0.legend(numpoints=1)
+        plt.draw()
+        
+        
+        # Optionally write a new FITS cube and figure for the subtracted images.
+        if save:
+            new_st_hdu = hdu_st
+            new_st_data = data_st.copy()
+            new_st_data[1] = Q_sub
+            new_st_data[2] = U_sub
+            new_st_hdu[1].data = new_st_data.astype('float32')
+            new_st_hdu[1].header.add_history("Subtracted instrumental polarization * I radial prof.")
+            new_phi_hdu = hdu
+            new_phi_data = data.copy()
+            new_phi_data[1] = Qr_medsub
+            new_phi_data[2] = Ur_medsub
+            new_phi_hdu[1].data = new_phi_data.astype('float32')
+            new_phi_hdu[1].header.add_history("Subtracted median instr. polarization * I radial prof.")
+            new_phi_hdu[1].header['QUADTHET'] = ("None", "Rotation angle of instr. quadrupole [degrees]")
+            new_phi_hdu[1].header['QUADAMP'] = ("None", "Amplitude of instr. quadrupole")
+    
+            try:
+                new_st_hdu.writeto(os.path.expanduser(path_fn_stokes.split('.fits')[0] + "_ipsub.fits"))
+                new_phi_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_med-ipsub.fits"))
+            except fits.verify.VerifyError:
+                new_st_hdu.writeto(os.path.expanduser(path_fn_stokes.split('.fits')[0] + "_ipsub.fits"), output_verify='fix+warn')
+                new_phi_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_med-ipsub.fits"), output_verify='fix+warn')
+            
+            # if len(path_fn.split('/')) == 1:
+            #     fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
+            # else:
+            #     fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
+    
+    # pdb.set_trace()
     return
 
 
@@ -1043,6 +1128,27 @@ def make_phi(arr, cen):
     return phi
 
 
+def get_radial_stokes(Q, U, phi):
+    """
+    Take normal Stokes parameters Q and U and convert them to
+    their radial counterparts Q_phi and U_phi. Math from Schmid et al. 2006
+    but adapted so +Q_phi represents vectors perpendicular to a ray from
+    the pixel to the star.
+    Conversion matches that of GPItv and pipeline primitive.
+    
+    Inputs:
+        Q: Stokes Q image.
+        U: Stokes U image.
+        phi: polar angle of a given position in Q or U image, calculated as
+                np.arctan2(yy - star_y, xx - star_x)
+    """
+    
+    Q_phi = Q*np.cos(2*phi) + U*np.sin(2*phi)
+    U_phi = -Q*np.sin(2*phi) + U*np.cos(2*phi)
+    
+    return Q_phi, U_phi
+
+
 def plot_profiles(rprof, az_prof, title):
     fig, ax = plt.subplots(2,2, figsize=(8,8))
     fig.suptitle(title, fontsize=18)
@@ -1073,7 +1179,7 @@ def plot_profiles(rprof, az_prof, title):
             
 
 def get_ann_stdmap(im, cen, radii, phi=None, r_max=None, mask_edges=False,
-				   use_mean=False, use_median=False, rprof_out=False):
+		   use_mean=False, use_median=False, rprof_out=False):
 	"""
 	Get standard deviation map from image im, measured in concentric annuli 
 	around cen. NaN's in im will be ignored (use for masking).
@@ -1129,7 +1235,7 @@ def get_ann_stdmap(im, cen, radii, phi=None, r_max=None, mask_edges=False,
 				val = np.nanstd(im[wr])
 				stdmap[wr] = val
 		rprof.append(val)
-	   
+
 	if phi is not None:
 		az_rad = np.linspace(10, r_max-40,4)
 		az_prof = []
