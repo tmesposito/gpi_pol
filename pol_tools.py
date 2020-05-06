@@ -13,7 +13,11 @@ import warnings
 import time
 # warnings.simplefilter("ignore", ImportWarning)
 # warnings.simplefilter("ignore", RuntimeWarning)
-import pdb
+try:
+    import ipdb
+    pdb = ipdb
+except:
+    import pdb
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -26,7 +30,8 @@ from glob import glob
 
 def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
                               theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
-                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
+                              octo=False, scale_by_r=False, save=False, figNum=80
+                              , path_fn_stokes=None):
     """
     Subtract instrumental quadrupole signal from GPI radial Stokes cubes.
     
@@ -266,11 +271,11 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     ax0.set_ylabel("U$_\\phi$", rotation=0)
     ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
     ax1 = fig0.add_subplot(232)
-    ax1.imshow(mask_fit*res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
+    ax1.imshow(res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
                norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
     ax1.text(0.05, 0.95, "Data$-$Quad", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
     ax2 = fig0.add_subplot(233)
-    ax2.imshow(mask_fit*quad_bf, vmin=vmin_Ur, vmax=vmax_Ur,
+    ax2.imshow(quad_bf, vmin=vmin_Ur, vmax=vmax_Ur,
                norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
     ax2.text(0.05, 0.95, "Quad", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
     ax3 = fig0.add_subplot(234)
@@ -284,6 +289,11 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     ax5.imshow(quad_bf_rotQr, vmin=vmin_Qr, vmax=vmax_Qr,
                norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
     plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
+    for ax in [ax1, ax2]:
+        in_circle = plt.Circle(star, rin, fill=False, facecolor='None', edgecolor='0.8', linestyle='--', linewidth=2)
+        out_circle = plt.Circle(star, rout, fill=False, facecolor='None', edgecolor='0.8', linestyle='--', linewidth=2)
+        ax.add_artist(in_circle)
+        ax.add_artist(out_circle)
     for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
         ax.set_xticks(range(star[1] - 150, star[1] + 151, 100))
         ax.set_yticks(range(star[0] - 150, star[0] + 151, 100))
@@ -292,6 +302,126 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     for ax in [ax0, ax1, ax2]:
         ax.set_xticklabels("")
     for ax in [ax1, ax2, ax4, ax5]:
+        ax.set_yticklabels("")
+    # plt.tight_layout()
+    plt.draw()
+    
+# TEMP!!! Subtract instrumental pol from Q and U.
+    hdu_st = fits.open(os.path.expanduser(path_fn_stokes))
+    data_st = hdu_st[1].data
+    Q = data_st[1]
+    U = data_st[2]
+    # Replace the star center pixel value so it is not NaN in Qr.
+    if np.isnan(Q[star[0], star[1]]):
+        Q[star[0], star[1]] = np.nanmean(Q[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
+        U[star[0], star[1]] = np.nanmean(U[star[0]-1:star[0]+2, star[1]-1:star[1]+2])
+    
+    rin_st = 50 #65
+    rout_st = 80 #75
+    I_scale_st = I_radmedian/I_radmedian[int(np.median(range(rin_st, rout_st+1)))]
+    mask_st = (radii > rin_st) & (radii < rout_st)
+    Q_3sig_lo = np.percentile(np.nan_to_num(Q[mask_st]), 16.)
+    Q_3sig_up = np.percentile(np.nan_to_num(Q[mask_st]), 84.)
+    Q_mask = np.ones(Q.shape)
+    Q_mask[mask_st] = 0
+    Q_mask[Q < Q_3sig_lo] = 1
+    Q_mask[Q > Q_3sig_up] = 1
+    Q_masked = np.ma.masked_array(Q.copy(), mask=Q_mask)
+    U_3sig_lo = np.percentile(np.nan_to_num(U[mask_st]), 16.)
+    U_3sig_up = np.percentile(np.nan_to_num(U[mask_st]), 84.)
+    U_mask = np.ones(U.shape)
+    U_mask[mask_st] = 0
+    U_mask[U < U_3sig_lo] = 1
+    U_mask[U > U_3sig_up] = 1
+    U_masked = np.ma.masked_array(U.copy(), mask=U_mask)
+    
+    Q_med = np.nanmedian(Q_masked.compressed())
+    U_med = np.nanmedian(U_masked.compressed())
+    
+    Q_sub = Q - Q_med*I_scale_st
+    U_sub = U - U_med*I_scale_st
+    res_U_bf = U_sub
+    
+    from gpi_process import get_radial_stokes
+    Qr_medsub, Ur_medsub = get_radial_stokes(Q_sub, U_sub, phi)
+    
+    
+# TEMP!!! Plot Q and U
+    vmin_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 1.) #np.nanmin(U)
+    vmax_U = 4*np.percentile(np.nan_to_num(U[100:180, 100:180]), 99.) # np.nanmax(U)
+    vmin_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 1.) #np.nanmin(U)
+    vmax_Q = 4*np.percentile(np.nan_to_num(Q[100:180, 100:180]), 99.) # np.nanmax(U)
+    linthresh = 0.1 #2e-9
+    linscale = 1.
+    
+    fig1 = plt.figure(figNum+1, figsize=(8, 6))
+    fig1.clf()
+    fig1.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
+    ax0 = fig1.add_subplot(231)
+    ax0.imshow(U, vmin=vmin_U, vmax=vmax_U,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+    ax0.set_ylabel("U", rotation=0)
+    ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
+    ax1 = fig1.add_subplot(232)
+    ax1.imshow(res_U_bf, vmin=vmin_U, vmax=vmax_U,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+    ax1.text(0.05, 0.95, "Data$-$Median", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
+    ax2 = fig1.add_subplot(233)
+    ax2.imshow(U_masked, vmin=vmin_U, vmax=vmax_U,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_U, vmax=vmax_U))
+    ax2.text(0.05, 0.95, "ROI", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
+    ax3 = fig1.add_subplot(234)
+    ax3.imshow(Q, vmin=vmin_Q, vmax=vmax_Q,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+    ax3.set_ylabel("Q", rotation=0)
+    ax4 = fig1.add_subplot(235)
+    ax4.imshow(Q_sub, vmin=vmin_Q, vmax=vmax_Q,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+    ax5 = fig1.add_subplot(236)
+    ax5.imshow(Q_masked, vmin=vmin_Q, vmax=vmax_Q,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Q, vmax=vmax_Q))
+    plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
+    for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
+        ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
+        ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
+        ax.set_xticklabels(range(-100, 101, 100))
+        ax.set_yticklabels(range(-100, 101, 100))
+    for ax in [ax0, ax1, ax2]:
+        ax.set_xticklabels("")
+    for ax in [ax1, ax2, ax4, ax5]:
+        ax.set_yticklabels("")
+    # plt.tight_layout()
+    plt.draw()
+    
+    fig2 = plt.figure(figNum+2, figsize=(6., 6))
+    fig2.clf()
+    # fig2.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
+    ax0 = fig2.add_subplot(221)
+    ax0.imshow(Ur_medsub, vmin=vmin_Ur, vmax=vmax_Ur,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
+    ax0.set_ylabel("U$_\\phi$", rotation=0)
+    ax0.text(0.05, 0.95, "Stokes sub", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
+    ax1 = fig2.add_subplot(222)
+    ax1.imshow(res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
+    ax1.text(0.05, 0.95, "$\phi$ sub", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
+    ax2 = fig2.add_subplot(223)
+    ax2.imshow(Qr_medsub, vmin=vmin_Qr, vmax=vmax_Qr,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
+    ax2.set_ylabel("Q$_\\phi$", rotation=0)
+    # ax2.text(0.05, 0.95, "$\phi$ sub", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
+    ax3 = fig2.add_subplot(224)
+    ax3.imshow(Qr_sub, vmin=vmin_Qr, vmax=vmax_Qr,
+               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
+    plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.15, hspace=0.05, wspace=0.05)
+    for ax in [ax0, ax1, ax2, ax3]:
+        ax.set_xticks(range(star[1] - 100, star[1] + 101, 100))
+        ax.set_yticks(range(star[0] - 100, star[0] + 101, 100))
+        ax.set_xticklabels(range(-100, 101, 100))
+        ax.set_yticklabels(range(-100, 101, 100))
+    for ax in [ax0, ax1]:
+        ax.set_xticklabels("")
+    for ax in [ax1, ax3]:
         ax.set_yticklabels("")
     # plt.tight_layout()
     plt.draw()
@@ -331,7 +461,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         else:
             fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + "_" + scale_name + '.png'), dpi=300, transparent=True, format='png')
     
-    
+    pdb.set_trace()
     return
 
 
