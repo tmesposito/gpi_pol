@@ -72,6 +72,17 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         else:
             pen = 1.
         return pen*np.nansum((im - (10**pl[1]*quad(phi, pl[0], pole, pos_pole)*quad_scaling))**2)
+
+    def UI_residuals(pl, im, pole, quad_scaling, phi, theta_bounds, I, U_radprof):
+        # Fits both I image and U radial profile as rad scaling.
+        # Apply prior penalty to restrict dtheta.
+        if not ((pl[0] >= theta_bounds[0]) and (pl[0] <= theta_bounds[1])):
+            pen = 1e3
+        else:
+            pen = 1.
+        base_pole = 10**pl[1]*quad(phi, pl[0], pole, pos_pole)
+        mixed_pole = base_pole * pl[2] * I + base_pole * pl[3] * U_radprof
+        return pen*np.nansum((im - mixed_pole)**2)
     
     star = np.array([140, 140])
     
@@ -148,7 +159,10 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Just I im, rather than median profile of I
     if quad_scale == 'I':
         quad_scaling = I
-    # Find radial profile using absolute value of Ur
+    # Radial profile of U
+    elif quad_scale == 'U_med':
+        quad_scaling = Ur_med
+    # Try to find radial profile of pole using absolute value of Ur
     elif quad_scale == 'U_abs':
         Ur_absolute = np.absolute(Ur_clipped-Ur_bg_mean)
         plt.imshow(Ur_absolute,vmin=np.nanpercentile(Ur_absolute,5), vmax=np.nanpercentile(Ur_absolute,95))
@@ -160,17 +174,24 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         plt.show()
     
     # Perform the fit. (First fit if it being done twice)
-    p0 = np.array([dtheta0, C0])
+    if quad_scale != 'UI_mix':
+        p0 = np.array([dtheta0, C0])
+    else:
+        p0 = np.array([dtheta0, C0, 0.5, 0.5]) # half-half U, I mix as guess
     
     if do_fit:
         from scipy.optimize import fmin
-        output = fmin(residuals, p0, (mask_fit*Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds), full_output=1, disp=1)
+        if quad_scale != 'UI_mix':
+            output = fmin(residuals, p0, (mask_fit*Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds), full_output=1, disp=1)
+        else:
+            output = fmin(UI_residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds, I, Ur_med),
+                          full_output=1, disp=1)
         pf = output[0]
     else:
         pf = p0
     
     # MORE Quad Scale options where pole fitting is done again
-    # Find radial profile by dividing first fit, clipping extremes
+    # Find radial profile by dividing the first fit, clipping extremes
     if quad_scale == 'U_div':
         quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) 
         quad_bf = quad_bf / np.nanmax(quad_bf)  
@@ -217,6 +238,8 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         else:
             pf = p0
 
+    if quad_scale == 'UI_mix':
+        quad_scaling = pf[2]*I + pf[3]*Ur_med
     quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole)*quad_scaling
     
     # Get and plot the fit profiles to compare with I and Ur profiles
@@ -281,21 +304,32 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         new_data[2] = res_bf
         new_hdu[1].data = new_data.astype('float32')
         if octo:
-            new_hdu[1].header.add_history("Subtracted instrumental octopole * I radial prof.")
+            new_hdu[1].header.add_history("Subtracted instrumental octopole")
         else:
-            new_hdu[1].header.add_history("Subtracted instrumental quadrupole * I radial prof.")
+            new_hdu[1].header.add_history("Subtracted instrumental quadrupole")
+        if not quad_scale:
+            new_hdu[1].header.add_history("Pole multiplied by median I profile")
+        elif quad_scale == 'I':
+            new_hdu[1].header.add_history("Pole multiplied by scaled I image")
+        elif quad_scale in ['U_abs', 'U_div', 'U_pos']:
+            new_hdu[1].header.add_history("Pole multiplied by median U profile")
         new_hdu[1].header['QUADTHET'] = ("%.3f" % np.degrees(pf[0]), "Rotation angle of instr. quadrupole [degrees]")
         new_hdu[1].header['QUADAMP'] = ("%.3e" % 10**pf[1], "Amplitude of instr. quadrupole")
+
+        if not quad_scale:
+            scale_name = ''
+        else:
+            scale_name = quad_scale
         
         try:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), overwrite=True)
+            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_" + scale_name + "_quadsub.fits"), overwrite=True)
         except fits.verify.VerifyError:
-            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_quadsub.fits"), output_verify='fix+warn', overwrite=True)
+            new_hdu.writeto(os.path.expanduser(path_fn.split('.fits')[0] + "_" + scale_name + "_quadsub.fits"), output_verify='fix+warn', overwrite=True)
         
         if len(path_fn.split('/')) == 1:
-            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=False, format='png')
+            fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + "_" + scale_name + '.png', dpi=300, transparent=False, format='png')
         else:
-            fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
+            fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + "_" + scale_name + '.png'), dpi=300, transparent=True, format='png')
     
     
     return
@@ -329,7 +363,7 @@ def remove_quadrupole_batch(path_list=None, path_dir=None, dtheta0=0., C0=2., do
     return
 
 
-def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, dtheta0=0., C0=2., do_fit=True,
+def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=None, dtheta0=0., C0=2., do_fit=True,
                               theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
                               octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
     """
@@ -351,59 +385,77 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, dtheta0=0., C
     
     recipe_dir = path_fn+'/recipe_tmp/'
     out_dir = path_fn+'/stokes_output/'
-    
-    podc_files = sorted(glob(path_fn+'*.fits'))
+
+    if path_list:
+        podc_files = path_list
+    else:
+        podc_files = sorted(glob(path_fn+'*.fits'))
     
     try:
         os.mkdir(out_dir)
+        overwrite = 0
     except:
-        pass
+        overwrite = input('Converted rstokes cubes may already exist. \nEnter 1 to use, 2 to remove and overwrite, or nothing to quit.')
+        if not overwrite:
+            exit()
     try:
         os.mkdir(recipe_dir)
     except:
         pass
 
-    # Get podc groups of 4 to convert to rstokes
-    num_g = int(np.floor((len(podc_files)/4)))
-    im_groups = [podc_files[i*4:i*4+4] for i in range(num_g)]
-    
-    # Recipe editing
-    name_base = recipe_temp.strip('/').split('/')[-1].replace('template_recipe','').replace('.xml','')
-    
-    for group in im_groups:
-        # Load recipe template
-        recipe_xml = minidom.parse(recipe_temp)
+    if overwrite == 2:
+        existing_files = glob(out_dir+'*')
+        print('The following files will be removed:')
+        print(existing_files[i] for i in range(len(existing_files)))
+        confirm = input('Confirm remove these files? (y/n)')
+        os.remove(existing_files) if confirm == 'y' else exit()
 
-        # Set input/output directory    
-        dataset = recipe_xml.getElementsByTagName('dataset')[0]
-        dataset.setAttribute('InputDir', path_fn)
-        dataset.setAttribute('OutputDir', out_dir)
+    if overwrite == 0 or overwrite == 2:
+        # Get podc groups of 4 to convert to rstokes
+        num_g = int(np.floor((len(podc_files)/4)))
+        im_groups = [podc_files[i*4:i*4+4] for i in range(num_g)]
 
-        # Add file names
-        for file in group:
-            fits_att = recipe_xml.createElement('fits')
-            fname = file.strip('/').split('/')[-1]
-            fits_att.setAttribute('FileName', fname)
-            recipe_xml.getElementsByTagName('dataset')[0].appendChild(fits_att)
+        # Recipe editing
+        name_base = recipe_temp.strip('/').split('/')[-1].replace('template_recipe','').replace('.xml','')
 
-        # Get naming for new template and write
-        first_fname = group[0].strip('/').split('/')[-1].replace('.fits','')
-        last_fname = group[-1].strip('/').split('/')[-1].replace('.fits','')
-        pre_name = first_fname +'-' + last_fname
-        xml_out = pre_name+name_base+'.waiting.xml'
-        recipe_xml.writexml(open(recipe_dir+xml_out, 'w'))
-        recipe_xml.unlink()
+        for group in im_groups:
+            # Load recipe template
+            recipe_xml = minidom.parse(recipe_temp)
 
-        shutil.move(recipe_dir+xml_out, queue_path+xml_out)
-    
-    # Allow time for recipes to finish
-    time.sleep(num_g*3)
+            # Set input/output directory
+            dataset = recipe_xml.getElementsByTagName('dataset')[0]
+            dataset.setAttribute('InputDir', path_fn)
+            dataset.setAttribute('OutputDir', out_dir)
+
+            # Add file names
+            for file in group:
+                fits_att = recipe_xml.createElement('fits')
+                fname = file.strip('/').split('/')[-1]
+                fits_att.setAttribute('FileName', fname)
+                recipe_xml.getElementsByTagName('dataset')[0].appendChild(fits_att)
+
+            # Get naming for new template and write
+            first_fname = group[0].strip('/').split('/')[-1].replace('.fits','')
+            last_fname = group[-1].strip('/').split('/')[-1].replace('.fits','')
+            pre_name = first_fname +'-' + last_fname
+            xml_out = pre_name+name_base+'.waiting.xml'
+            recipe_xml.writexml(open(recipe_dir+xml_out, 'w'))
+            recipe_xml.unlink()
+
+            shutil.move(recipe_dir+xml_out, queue_path+xml_out)
+
+        # Allow time for recipes to finish
+        time.sleep(num_g*3)
+
+    if overwrite == 1:
+        print('Attempting pole subtraction on existing rstokes cubes...')
 
     # Remove quadrupoles
     remove_quadrupole_batch(path_list=None, path_dir=out_dir, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
-                            theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r, 
+                            theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r,
                             save=save, figNum=figNum, quad_scale=quad_scale, pos_pole=pos_pole)
 
+    print('\n\tPole subtraction complete, combining subtracted rstokes cubes.')
     # Gather subtracted rstokes and combine
     sub_rstokes = glob(out_dir+'*rstokesdc_quadsub.fits')
 
@@ -431,8 +483,20 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, dtheta0=0., C
     new_data[2] = Ur_mn_comb
     new_hdu[1].data = new_data.astype('float32')
     new_hdu[1].header.add_history("Mean combined all subtracted frames")
-    new_hdu.writeto(out_dir+'mean_combined_rstokes_quadsub.fits')
-    
+
+    if not quad_scale:
+        scale_name = ''
+    else:
+        scale_name = quad_scale
+
+    try:
+        new_hdu.writeto(out_dir+'mean_combined_rstokes_' + scale_name + '_quadsub.fits')
+    except:
+        confirm = input('Overwite existing combined cube? (y/n)')
+        new_hdu.writeto(out_dir + 'mean_combined_rstokes_' + scale_name + '_quadsub.fits', overwrite=True) if confirm == 'y' else exit()
+
+    print('Done.')
+
     return
 
 
