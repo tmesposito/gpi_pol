@@ -209,19 +209,19 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     if quad_scale == 'U_div':
         quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) 
         quad_bf = quad_bf / np.nanmax(quad_bf)  
-        plt.imshow(quad_bf)
-        plt.colorbar()
-        plt.show()
+        #plt.imshow(quad_bf)
+        #plt.colorbar()
+        #plt.show()
         quad_Ur_scalefit = Ur_clipped / quad_bf
         quad_Ur_scalefit[quad_Ur_scalefit > np.nanpercentile(quad_Ur_scalefit, 98)] = np.nan # Clip divide by zeros
         quad_Ur_scalefit[quad_Ur_scalefit < 0] = np.nan  # Negatives aren't helpful
-        plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
-        plt.colorbar()
-        plt.show()
+        #plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
+        #plt.colorbar()
+        #plt.show()
         quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
-        plt.imshow(quad_scaling)
-        plt.colorbar()
-        plt.show()
+        #plt.imshow(quad_scaling)
+        #plt.colorbar()
+        #plt.show()
         
         if do_fit:
             from scipy.optimize import fmin
@@ -600,17 +600,19 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
     
     recipe_dir = path_fn+'/recipe_tmp/'
     out_dir = path_fn+'/stokes_output/'
+    print('Output will be placed in ', out_dir)
 
     if path_list:
         podc_files = path_list
     else:
-        podc_files = sorted(glob(path_fn+'*.fits'))
+        podc_files = sorted(glob(path_fn+'*podc*.fits'))
     
     try:
         os.mkdir(out_dir)
         overwrite = 0
     except:
-        overwrite = input('Converted rstokes cubes may already exist. \nEnter 1 to use, 2 to remove and overwrite, or nothing to quit.')
+        #overwrite = input('Converted rstokes cubes may already exist. \nEnter 1 to use, 2 to remove and overwrite, or nothing to quit.')
+        overwrite = 1
         if not overwrite:
             exit()
     try:
@@ -626,6 +628,7 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
         os.remove(existing_files) if confirm == 'y' else exit()
 
     if overwrite == 0 or overwrite == 2:
+        print('Starting GPI podc to rstokes conversions...')
         # Get podc groups of 4 to convert to rstokes
         num_g = int(np.floor((len(podc_files)/4)))
         im_groups = [podc_files[i*4:i*4+4] for i in range(num_g)]
@@ -662,8 +665,7 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
         # Allow time for recipes to finish
         time.sleep(num_g*3)
 
-    if overwrite == 1:
-        print('Attempting pole subtraction on existing rstokes cubes...')
+    print('Starting batch remove quadrupole...')
 
     # Remove quadrupoles
     remove_quadrupole_batch(path_list=None, path_dir=out_dir, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
@@ -705,9 +707,11 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
         scale_name = quad_scale
 
     try:
+        print('Saving mean combined rstokes as ', out_dir+'mean_combined_rstokes_' + scale_name + '_quadsub.fits')
         new_hdu.writeto(out_dir+'mean_combined_rstokes_' + scale_name + '_quadsub.fits')
     except:
-        confirm = input('Overwite existing combined cube? (y/n)')
+        #confirm = input('Overwite existing combined cube? (y/n)')
+        confirm = 'y'
         new_hdu.writeto(out_dir + 'mean_combined_rstokes_' + scale_name + '_quadsub.fits', overwrite=True) if confirm == 'y' else exit()
 
     print('Done.')

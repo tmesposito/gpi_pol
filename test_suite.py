@@ -21,11 +21,13 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
-from gpi_pol import pol_tools
+import pol_tools
 
 
 base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
 output_dir = base_dir + "output/"
+recipe_temp = base_dir + "template_recipe_stokesdc_from_podc-tme.xml"
+queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
 
 
 class Suite:
@@ -67,7 +69,43 @@ class Suite:
     def analyze_output(self):
         
         # Noise amplitude at range of radii?
-        
+        star = np.array([140,140])
+        rin=20
+        rout=30
+        for ii, ds in enumerate(self.datasets):
+            print('\n\t',ds)
+            ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
+            for key in sorted(self.test_funcs.keys()):
+                try:
+                    if key == "remove_quadrupole_rstokes":
+                        fp = glob.glob(self.output_dir + ds + '/*_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_I":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_Udiv":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_UImix":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
+                    ims.append(fits.getdata(fp))
+
+                except:
+                    ims.append(np.nan*np.ones(ims[0].shape))
+
+            radii = pol_tools.make_radii(ims[0][2], star)
+            mask_fit = np.ones(ims[0][2].shape)
+            mask_fit[(radii <= rin) | (radii >= rout)] = np.nan
+            print('\n', 'No subtraction noise:')
+            print(np.nanstd(ims[0][2]*mask_fit))
+
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                radii = pol_tools.make_radii(im[2], star)
+                mask_fit = np.ones(im[2].shape)
+                mask_fit[(radii <= rin) | (radii >= rout)] = np.nan
+                print('\n', key.strip('_').split('_')[-1], 'Noise:')
+                print(np.nanstd(im[2]*mask_fit))
+
+
+
         # SNR gain at specific locations?
         
         
@@ -82,9 +120,17 @@ class Suite:
                 try:
                     if key == "remove_quadrupole_rstokes":
                         fp = glob.glob(self.output_dir + ds + '/*_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_I":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_Udiv":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_UImix":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
+
                 except:
                     ims.append(np.nan*np.ones(ims[0].shape))
+
             vmax = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 99.)
             # plt.figure(ii)
             # plt.clf()
@@ -95,14 +141,14 @@ class Suite:
             N_axes = ax_list.size
             # Qphi
             ax_list[0][0].imshow(ims[0][1], vmin=0, vmax=vmax)
-            ax_list[0][0].set_title('No Sub', fontsize=fontSize)
+            ax_list[0][0].set_title('No Sub\n'+str(round(noise,4)), fontsize=fontSize)
             # Uphi
             ax_list[1][0].imshow(ims[0][2], vmin=0, vmax=vmax)
             
             for kk, im in enumerate(ims[1:]):
                 key = sorted(self.test_funcs.keys())[kk]
                 ax_list[0][kk+1].imshow(im[1], vmin=0, vmax=vmax)
-                ax_list[0][kk+1].set_title(key, fontsize=fontSize)
+                ax_list[0][kk+1].set_title(key.strip('_').split('_')[-1], fontsize=fontSize)
                 ax_list[1][kk+1].imshow(im[2], vmin=0, vmax=vmax)
             
             plt.draw()
@@ -115,7 +161,8 @@ class Suite:
                     ax.text(-0.5, 0.5, 'Q_phi', transform=ax.transAxes)
                 if jj == N_axes//2:
                     ax.text(-0.5, 0.5, 'U_phi', transform=ax.transAxes)
-        
+
+            plt.show()
         return
     
     # Make some summary plots of results...
@@ -135,7 +182,11 @@ class Suite:
                 if key == 'remove_quadrupole_rstokes':
                     self.func_kwargs[key]['path_fn'] = self.input_files[ds]["rstokesdc_nosub"]
                     self.func_kwargs[key]['save'] = self.output_dir + "{}/{}_quadsub.fits".format(ds, os.path.splitext(os.path.split(self.input_files[ds]['rstokesdc_nosub'])[-1])[0])
+                else:
+                    self.func_kwargs[key]['path_fn'] = self.base_dir + ds + '/'
+                    self.func_kwargs[key]['path_list'] = self.input_files[ds]["podc_nosub"]
                 func(**self.func_kwargs[key])
+                
         
         return
 
@@ -152,6 +203,7 @@ if __name__ == "__main__":
     
     # The input data files we are using, by data set.
     input_files = {}
+
     input_files.update(HD_32297={
                     "podc_nosub":sorted(glob.glob(base_dir + "HD_32297/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc.fits",
@@ -176,8 +228,11 @@ if __name__ == "__main__":
                     "rstokesdc_nosub":base_dir + "HD_7112/S20181121S0094_podc_distorcorr_rstokesdc.fits"})
         
     # Dict of functions we are going to run on the test data.
-    test_funcs = {"remove_quadrupole_rstokes":pol_tools.remove_quadrupole_rstokes}
-    
+    test_funcs = {"remove_quadrupole_rstokes":pol_tools.remove_quadrupole_rstokes,
+                "remove_quadrupole_podc_I":pol_tools.remove_quadrupole_podc_group,
+                "remove_quadrupole_podc_Udiv":pol_tools.remove_quadrupole_podc_group,
+                "remove_quadrupole_podc_UImix":pol_tools.remove_quadrupole_podc_group}  
+
     theta_bounds = (0., np.pi)
     
     # Dict of keyword arguments to feed into the funcs in the test_funcs dict.
@@ -188,6 +243,25 @@ if __name__ == "__main__":
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
                                 "octo":False, "scale_by_r":False, "save":True,
                                 "figNum":80, "show_region":True, "path_fn_stokes":None})
+    func_kwargs.update(remove_quadrupole_podc_I={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
+                                "path_list":None, "dtheta0":np.pi/2.,
+                                "C0":-3., "do_fit":True,
+                                "theta_bounds":theta_bounds, "rin":30, "rout":100,
+                                "octo":False, "scale_by_r":False, "save":True,
+                                "figNum":80, "quad_scale":'I', "pos_pole":False})
+    func_kwargs.update(remove_quadrupole_podc_Udiv={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
+                                "path_list":None, "dtheta0":np.pi/2.,
+                                "C0":-3., "do_fit":True,
+                                "theta_bounds":theta_bounds, "rin":30, "rout":100,
+                                "octo":False, "scale_by_r":False, "save":True,
+                                "figNum":80, "quad_scale":'U_div', "pos_pole":False})
+    func_kwargs.update(remove_quadrupole_podc_UImix={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
+                                "path_list":None, "dtheta0":np.pi/2.,
+                                "C0":-3., "do_fit":True,
+                                "theta_bounds":theta_bounds, "rin":30, "rout":100,
+                                "octo":False, "scale_by_r":False, "save":True,
+                                "figNum":80, "quad_scale":'UI_mix', "pos_pole":False})
+
     
     # Create the test suite object.
     suite = Suite(test_funcs, func_kwargs, datasets, input_files)
@@ -195,6 +269,7 @@ if __name__ == "__main__":
     # Run the functions on the test datasets.
     suite.run()
     # Plot the output.
+    suite.analyze_output()
     suite.plot_output()
     # Eventually, do some analysis on the output....
     
