@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 
 from scipy.stats import binned_statistic
+from scipy.ndimage import gaussian_filter
 from xml.dom import minidom
 from glob import glob
 
@@ -94,7 +95,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         else:
             pen = 1.
         base_pole = 10**pl[1]*quad(phi, pl[0], pole, pos_pole)
-        mixed_pole = base_pole * pl[2] * I + base_pole * pl[3] * U_radprof
+        mixed_pole = base_pole * pl[2] * gauss_filter(I) + base_pole * pl[3] * gauss_filter(U_radprof)
         return pen*np.nansum((im - mixed_pole)**2)
     
     star = np.array([140, 140])
@@ -172,10 +173,10 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Beginning of NEW Quad Scale options
     # Just I im, rather than median profile of I
     if quad_scale == 'I':
-        quad_scaling = I
+        quad_scaling = gauss_filter(I)
     # Radial profile of U
     elif quad_scale == 'U_med':
-        quad_scaling = Ur_med
+        quad_scaling = gauss_filter(Ur_med)
     # Try to find radial profile of pole using absolute value of Ur
     elif quad_scale == 'U_abs':
         Ur_absolute = np.absolute(Ur_clipped-Ur_bg_mean)
@@ -183,6 +184,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         plt.colorbar()
         plt.show()
         quad_scaling, rprof = get_ann_stdmap(Ur_absolute, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        quad_scaling = gaussfilter(quad_scaling)
         plt.imshow(quad_scaling,vmin=np.nanpercentile(quad_scaling,5), vmax=np.nanpercentile(quad_scaling,95))
         plt.colorbar()
         plt.show()
@@ -219,6 +221,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         #plt.colorbar()
         #plt.show()
         quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        quad_scaling = gauss_filter(quad_scaling)
         #plt.imshow(quad_scaling)
         #plt.colorbar()
         #plt.show()
@@ -239,6 +242,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         plt.colorbar()
         plt.show()
         quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
+        quad_scaling = gauss_filter(quad_scaling)
         plt.imshow(quad_scaling)
         plt.colorbar()
         plt.show()
@@ -253,7 +257,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             pf = p0
 
     if quad_scale == 'UI_mix':
-        quad_scaling = pf[2]*I + pf[3]*Ur_med
+        quad_scaling = pf[2]*gauss_filter(I) + pf[3]*gauss_filter(Ur_med)
     quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole)*quad_scaling
     
     # Get and plot the fit profiles to compare with I and Ur profiles
@@ -689,9 +693,9 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
         Qrsub_images[i] = hdu[1].data[1]
         Ursub_images[i] = hdu[1].data[2]
 
-    I_mn_comb = np.mean(I_images, axis=0)
-    Qr_mn_comb = np.mean(Qrsub_images, axis=0)
-    Ur_mn_comb = np.mean(Ursub_images, axis=0)
+    I_mn_comb = np.nanmean(I_images, axis=0)
+    Qr_mn_comb = np.nanmean(Qrsub_images, axis=0)
+    Ur_mn_comb = np.nanmean(Ursub_images, axis=0)
 
     new_hdu = hdu_master
     new_data = data.copy()
@@ -1180,6 +1184,12 @@ def plot_profiles(rprof, az_prof, title):
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
     return
+
+def gauss_filter(im, sigma=3):
+    im_zero = np.nan_to_num(im)
+    gfiltered = gaussian_filter(im_zero, sigma=sigma)
+    gfiltered[gfiltered ==0] = np.nan
+    return gfiltered
             
 
 def get_ann_stdmap(im, cen, radii, phi=None, r_max=None, mask_edges=False,

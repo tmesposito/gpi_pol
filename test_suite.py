@@ -22,6 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 import pol_tools
+from pol_analysis import robust_std
 
 
 base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
@@ -68,12 +69,14 @@ class Suite:
     # Measure some metrics for comparison...
     def analyze_output(self):
         
-        # Noise amplitude at range of radii?
+        # Noise amplitude at range of radii
+        # Calculated in high pass, low pass, and no filter images
         star = np.array([140,140])
-        rin=20
-        rout=30
+        rin=[10,15,20,25,30,35]
+        rout=[15,20,25,30,35,40]
+        self.noise = {}
         for ii, ds in enumerate(self.datasets):
-            print('\n\t',ds)
+            self.noise[ds] = {}
             ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
             for key in sorted(self.test_funcs.keys()):
                 try:
@@ -90,19 +93,87 @@ class Suite:
                 except:
                     ims.append(np.nan*np.ones(ims[0].shape))
 
-            radii = pol_tools.make_radii(ims[0][2], star)
-            mask_fit = np.ones(ims[0][2].shape)
-            mask_fit[(radii <= rin) | (radii >= rout)] = np.nan
-            print('\n', 'No subtraction noise:')
-            print(np.nanstd(ims[0][2]*mask_fit))
+            # Dictionary for normal, low pass, and high pass
+            self.noise[ds]['nom'] = {}
+            self.noise[ds]['lp'] = {}
+            self.noise[ds]['hp'] = {}
+            self.noise[ds]['nom']['no_sub'] = []
+            self.noise[ds]['lp']['no_sub'] = []
+            self.noise[ds]['hp']['no_sub'] = []
+            for kk, im in enumerate(ims[1:]):
+                    key = sorted(self.test_funcs.keys())[kk]
+                    self.noise[ds]['nom'][key] = []
+                    self.noise[ds]['lp'][key] = []
+                    self.noise[ds]['hp'][key] = []
 
+            for jj in range(6):
+                # No Subtraction
+                radii = pol_tools.make_radii(ims[0][2], star)
+                mask_fit = np.ones(ims[0][2].shape)
+                mask_fit[(radii <= rin[jj]) | (radii >= rout[jj])] = np.nan
+                lp_filtered = pol_tools.gauss_filter(ims[0][2],sigma=5)
+                hp_filtered = ims[0][2] - lp_filtered
+                nomn = robust_std(ims[0][2]*mask_fit)
+                lpn = robust_std(lp_filtered*mask_fit)
+                hpn = robust_std(hp_filtered*mask_fit)
+                self.noise[ds]['nom']['no_sub'].append(nomn)
+                self.noise[ds]['lp']['no_sub'].append(lpn)
+                self.noise[ds]['hp']['no_sub'].append(hpn)
+
+                # Different subtraction methods
+                for kk, im in enumerate(ims[1:]):
+                    key = sorted(self.test_funcs.keys())[kk]
+                    radii = pol_tools.make_radii(im[2], star)
+                    mask_fit = np.ones(im[2].shape)
+                    mask_fit[(radii <= rin[jj]) | (radii >= rout[jj])] = np.nan
+                    lp_filtered = pol_tools.gauss_filter(im[2],sigma=5)
+                    hp_filtered = im[2] - lp_filtered
+                    nomn = robust_std(im[2]*mask_fit)
+                    lpn = robust_std(lp_filtered*mask_fit)
+                    hpn = robust_std(hp_filtered*mask_fit)
+                    self.noise[ds]['nom'][key].append(nomn)
+                    self.noise[ds]['lp'][key].append(lpn)
+                    self.noise[ds]['hp'][key].append(hpn)
+
+            fig, axes = plt.subplots(1,3)
+            plt.suptitle('Noise Comparison ' + ds, fontsize=16)
+            ax0 = axes[0]
+            ax0.plot(rin, self.noise[ds]['nom']['no_sub'], label='no_sub')
+            ax0.scatter(rin, self.noise[ds]['nom']['no_sub'])
             for kk, im in enumerate(ims[1:]):
                 key = sorted(self.test_funcs.keys())[kk]
-                radii = pol_tools.make_radii(im[2], star)
-                mask_fit = np.ones(im[2].shape)
-                mask_fit[(radii <= rin) | (radii >= rout)] = np.nan
-                print('\n', key.strip('_').split('_')[-1], 'Noise:')
-                print(np.nanstd(im[2]*mask_fit))
+                ax0.plot(rin, self.noise[ds]['nom'][key],label=(key.strip('_').split('_')[-1]))
+                ax0.scatter(rin, self.noise[ds]['nom'][key])
+            ax0.set_title('No Filter')
+            ax0.set_ylabel('Noise')
+            ax0.set_xlabel('Inner radius + 5 px')
+            ax0.legend()
+
+            ax1 = axes[1]
+            ax1.plot(rin, self.noise[ds]['hp']['no_sub'], label='no_sub')
+            ax1.scatter(rin, self.noise[ds]['hp']['no_sub'])
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                ax1.plot(rin, self.noise[ds]['hp'][key],label=(key.strip('_').split('_')[-1]))
+                ax1.scatter(rin, self.noise[ds]['hp'][key])
+            ax1.set_title('High Pass')
+            ax1.set_ylabel('Noise')
+            ax1.set_xlabel('Inner radius + 5 px')
+            ax1.legend()
+
+            ax2 = axes[2]
+            ax2.plot(rin, self.noise[ds]['lp']['no_sub'], label='no_sub')
+            ax2.scatter(rin, self.noise[ds]['lp']['no_sub'])
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                ax2.plot(rin, self.noise[ds]['lp'][key],label=(key.strip('_').split('_')[-1]))
+                ax2.scatter(rin, self.noise[ds]['lp'][key])
+            ax2.set_title('Low Pass')
+            ax2.set_ylabel('Noise')
+            ax2.set_xlabel('Inner radius + 5 px')
+            ax2.legend()
+
+            plt.show()
 
 
 
@@ -141,7 +212,7 @@ class Suite:
             N_axes = ax_list.size
             # Qphi
             ax_list[0][0].imshow(ims[0][1], vmin=0, vmax=vmax)
-            ax_list[0][0].set_title('No Sub\n'+str(round(noise,4)), fontsize=fontSize)
+            ax_list[0][0].set_title('No Sub', fontsize=fontSize)
             # Uphi
             ax_list[1][0].imshow(ims[0][2], vmin=0, vmax=vmax)
             
@@ -200,6 +271,8 @@ if __name__ == "__main__":
     # 73 Her: non-detection with moderate, octopole instrumental noise
     # HD 7112: non-detection with weak instrumental noise (light quadrupole)
     datasets = ["HD_32297", "HD_191089", "CE_Ant", "73_Her", "HD_7112"]
+
+
     
     # The input data files we are using, by data set.
     input_files = {}
@@ -237,29 +310,31 @@ if __name__ == "__main__":
     
     # Dict of keyword arguments to feed into the funcs in the test_funcs dict.
     # Make sure the dict keys match between the two dicts.
+    octo=False
+
     func_kwargs = {}
     func_kwargs.update(remove_quadrupole_rstokes={"path_fn":None, "dtheta0":np.pi/2.,
                                 "C0":-3., "do_fit":True,
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
-                                "octo":False, "scale_by_r":False, "save":True,
+                                "octo":octo, "scale_by_r":False, "save":True,
                                 "figNum":80, "show_region":True, "path_fn_stokes":None})
     func_kwargs.update(remove_quadrupole_podc_I={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
                                 "path_list":None, "dtheta0":np.pi/2.,
                                 "C0":-3., "do_fit":True,
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
-                                "octo":False, "scale_by_r":False, "save":True,
+                                "octo":octo, "scale_by_r":False, "save":True,
                                 "figNum":80, "quad_scale":'I', "pos_pole":False})
     func_kwargs.update(remove_quadrupole_podc_Udiv={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
                                 "path_list":None, "dtheta0":np.pi/2.,
                                 "C0":-3., "do_fit":True,
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
-                                "octo":False, "scale_by_r":False, "save":True,
+                                "octo":octo, "scale_by_r":False, "save":True,
                                 "figNum":80, "quad_scale":'U_div', "pos_pole":False})
     func_kwargs.update(remove_quadrupole_podc_UImix={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
                                 "path_list":None, "dtheta0":np.pi/2.,
                                 "C0":-3., "do_fit":True,
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
-                                "octo":False, "scale_by_r":False, "save":True,
+                                "octo":octo, "scale_by_r":False, "save":True,
                                 "figNum":80, "quad_scale":'UI_mix', "pos_pole":False})
 
     

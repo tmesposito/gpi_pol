@@ -335,3 +335,29 @@ def auto_disk_brightness(data, noise_map, star):
 	pdb.set_trace()
 	
 	return
+
+
+def robust_std(im):
+	# get robust stdev (biweight)
+	# im must be numpy array
+	from astropy.stats import biweight_midvariance
+	var = biweight_midvariance(im, axis=None, ignore_nan=True)
+	std = np.sqrt(var)
+	# From Mike's code:
+	"""
+	m = np.nanmedian(im) # median value
+	d = im - m       # deviation
+	ad = np.abs(d)      # absolute deviation
+	mad = np.nanmedian(ad) # median absolute deviation
+	if mad == 0: std = 0. # no deviation -> zero stdev
+	else:
+		wt = biweight(d/1.483/mad) # weights
+		sum_wt = wt.sum()
+		sum_wt2 = (wt**2).sum()
+		m = (im*wt).sum() / sum_wt # weighted mean
+		d = im-m # deviation from weighted mean
+		var = (d**2 * wt).sum() / (sum_wt-sum_wt2/sum_wt) # weighted var
+		std = n.sqrt(var) # weighted stdev
+	"""
+	return std
+
