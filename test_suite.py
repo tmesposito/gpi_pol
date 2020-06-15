@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import pol_tools
 from pol_analysis import robust_std
+from astropy.stats import sigma_clip
 
 
 base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
@@ -72,8 +73,10 @@ class Suite:
         # Noise amplitude at range of radii
         # Calculated in high pass, low pass, and no filter images
         star = np.array([140,140])
-        rin=[10,15,20,25,30,35]
+        rin=[10,15,20,25,30,35] # Inner/outer radii of annulus
         rout=[15,20,25,30,35,40]
+        sigma=3 # Low pass filter width
+        std_method = 'mad' # Method for calculating noise (biweight or mad, else stdev)
         self.noise = {}
         for ii, ds in enumerate(self.datasets):
             self.noise[ds] = {}
@@ -111,11 +114,12 @@ class Suite:
                 radii = pol_tools.make_radii(ims[0][2], star)
                 mask_fit = np.ones(ims[0][2].shape)
                 mask_fit[(radii <= rin[jj]) | (radii >= rout[jj])] = np.nan
-                lp_filtered = pol_tools.gauss_filter(ims[0][2],sigma=5)
+                ims[0][2] = sigma_clip(ims[0][2], sigma=3, maxiters=1)
+                lp_filtered = pol_tools.gauss_filter(ims[0][2],sigma=sigma)
                 hp_filtered = ims[0][2] - lp_filtered
-                nomn = robust_std(ims[0][2]*mask_fit)
-                lpn = robust_std(lp_filtered*mask_fit)
-                hpn = robust_std(hp_filtered*mask_fit)
+                nomn = robust_std(ims[0][2]*mask_fit, method=std_method)
+                lpn = robust_std(lp_filtered*mask_fit, method=std_method)
+                hpn = robust_std(hp_filtered*mask_fit, method=std_method)
                 self.noise[ds]['nom']['no_sub'].append(nomn)
                 self.noise[ds]['lp']['no_sub'].append(lpn)
                 self.noise[ds]['hp']['no_sub'].append(hpn)
@@ -126,18 +130,28 @@ class Suite:
                     radii = pol_tools.make_radii(im[2], star)
                     mask_fit = np.ones(im[2].shape)
                     mask_fit[(radii <= rin[jj]) | (radii >= rout[jj])] = np.nan
-                    lp_filtered = pol_tools.gauss_filter(im[2],sigma=5)
+                    im[2] = sigma_clip(im[2], sigma=3, maxiters=1)
+                    lp_filtered = pol_tools.gauss_filter(im[2],sigma=sigma)
                     hp_filtered = im[2] - lp_filtered
-                    nomn = robust_std(im[2]*mask_fit)
-                    lpn = robust_std(lp_filtered*mask_fit)
-                    hpn = robust_std(hp_filtered*mask_fit)
+                    nomn = robust_std(im[2]*mask_fit, method=std_method)
+                    lpn = robust_std(lp_filtered*mask_fit, method=std_method)
+                    hpn = robust_std(hp_filtered*mask_fit, method=std_method)
                     self.noise[ds]['nom'][key].append(nomn)
                     self.noise[ds]['lp'][key].append(lpn)
                     self.noise[ds]['hp'][key].append(hpn)
 
-            fig, axes = plt.subplots(1,3)
-            plt.suptitle('Noise Comparison ' + ds, fontsize=16)
-            ax0 = axes[0]
+            # Create a figure showing noise as a function of radius in low and high pass filtered images
+            vmax = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 99.)
+            vmin = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 5.)
+            fig, axes = plt.subplots(2,3, figsize=(10,6))
+            plt.suptitle('Noise Comparison ' + ds + ' - Method = '+std_method, fontsize=16)
+
+            # Top reference image, no filter
+            axes[0,0].imshow(ims[0][2], vmin=vmin, vmax=vmax)
+            axes[0,0].set_title('No Subtraction - No Filter')
+
+            # Noise plot without filter
+            ax0 = axes[1,0]
             ax0.plot(rin, self.noise[ds]['nom']['no_sub'], label='no_sub')
             ax0.scatter(rin, self.noise[ds]['nom']['no_sub'])
             for kk, im in enumerate(ims[1:]):
@@ -149,7 +163,12 @@ class Suite:
             ax0.set_xlabel('Inner radius + 5 px')
             ax0.legend()
 
-            ax1 = axes[1]
+            # Top reference image, high pass
+            axes[0,1].imshow(ims[0][2] - pol_tools.gauss_filter(ims[0][2], sigma=sigma), vmin=vmin, vmax=vmax)
+            axes[0,1].set_title('No Subtraction - High Pass')
+
+            # Noise plot, high pass
+            ax1 = axes[1,1]
             ax1.plot(rin, self.noise[ds]['hp']['no_sub'], label='no_sub')
             ax1.scatter(rin, self.noise[ds]['hp']['no_sub'])
             for kk, im in enumerate(ims[1:]):
@@ -161,7 +180,12 @@ class Suite:
             ax1.set_xlabel('Inner radius + 5 px')
             ax1.legend()
 
-            ax2 = axes[2]
+            # Top reference image, low pass
+            axes[0,2].imshow(pol_tools.gauss_filter(ims[0][2], sigma=sigma), vmin=vmin, vmax=vmax)
+            axes[0,2].set_title('No Subtraction - Low Pass')
+
+            # Noise plot, low pass
+            ax2 = axes[1,2]
             ax2.plot(rin, self.noise[ds]['lp']['no_sub'], label='no_sub')
             ax2.scatter(rin, self.noise[ds]['lp']['no_sub'])
             for kk, im in enumerate(ims[1:]):
@@ -173,7 +197,7 @@ class Suite:
             ax2.set_xlabel('Inner radius + 5 px')
             ax2.legend()
 
-            plt.show()
+            plt.savefig(self.output_dir+ds+'/'+'subtraction_noise_comparison_'+std_method+'.png', dpi=300)
 
 
 
@@ -206,8 +230,10 @@ class Suite:
             # plt.figure(ii)
             # plt.clf()
             # plt.suptitle(self.input_files[ds]['rstokesdc_nosub'].split('/')[-1])
+
+            # Subtraction visual comparison figure
             fig, ax_list = plt.subplots(2, len(ims), sharex='col',
-                                        gridspec_kw={'hspace': 0, 'wspace': 0})
+                                        gridspec_kw={'hspace': 0, 'wspace': 0}, figsize=(8,6))
             plt.suptitle(ds, fontsize=fontSize+2)
             N_axes = ax_list.size
             # Qphi
@@ -233,7 +259,35 @@ class Suite:
                 if jj == N_axes//2:
                     ax.text(-0.5, 0.5, 'U_phi', transform=ax.transAxes)
 
-            plt.show()
+            plt.savefig(self.output_dir+ds+'/'+'subtraction_visual_comparison.png', dpi=300)
+
+            # Figure with grid of U images subtract in high and low pass filters
+            vmin = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 5.)
+            sigma=3
+
+            fig, ax_list = plt.subplots(5,3, figsize=(10,10))
+            plt.suptitle(ds+' - Uphi', fontsize=fontSize+2)
+
+            ax_list[0][0].imshow(ims[0][2], vmin=vmin, vmax=vmax)
+            ax_list[0][0].set_title('No Filter', fontsize=fontSize)
+            ax_list[0][0].set_ylabel('No Sub', fontsize=fontSize)
+            ax_list[0][1].imshow(ims[0][2] - pol_tools.gauss_filter(ims[0][2], sigma=sigma), vmin=vmin, vmax=vmax)
+            ax_list[0][1].set_title('High Pass', fontsize=fontSize)
+            ax_list[0][2].imshow(pol_tools.gauss_filter(ims[0][2]), vmin=vmin, vmax=vmax)
+            ax_list[0][2].set_title('Low Pass', fontsize=fontSize)
+
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                ax_list[kk+1][0].imshow(im[2], vmin=vmin, vmax=vmax)
+                ax_list[kk+1][0].set_ylabel(key.strip('_').split('_')[-1], fontsize=fontSize)
+                ax_list[kk+1][1].imshow(im[2] - pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
+                ax_list[kk+1][2].imshow(pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
+
+            plt.subplots_adjust(wspace=None, hspace=None)
+            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid.png', dpi=300)
+
+
+
         return
     
     # Make some summary plots of results...
