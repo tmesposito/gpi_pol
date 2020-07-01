@@ -76,7 +76,7 @@ class Suite:
         rin=[10,15,20,25,30,35] # Inner/outer radii of annulus
         rout=[15,20,25,30,35,40]
         sigma=3 # Low pass filter width
-        std_method = 'mad' # Method for calculating noise (biweight or mad, else stdev)
+        std_method = 'stdev' # Method for calculating noise (biweight or mad, else stdev)
         self.noise = {}
         for ii, ds in enumerate(self.datasets):
             self.noise[ds] = {}
@@ -91,6 +91,8 @@ class Suite:
                         fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UImix":
                         fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_UdivImix":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
 
                 except:
@@ -221,6 +223,8 @@ class Suite:
                         fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UImix":
                         fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
+                    elif key == "remove_quadrupole_podc_UdivImix":
+                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
 
                 except:
@@ -265,7 +269,7 @@ class Suite:
             vmin = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 5.)
             sigma=3
 
-            fig, ax_list = plt.subplots(5,3, figsize=(10,10))
+            fig, ax_list = plt.subplots(6,3, figsize=(10,10), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
             plt.suptitle(ds+' - Uphi', fontsize=fontSize+2)
 
             ax_list[0][0].imshow(ims[0][2], vmin=vmin, vmax=vmax)
@@ -283,8 +287,31 @@ class Suite:
                 ax_list[kk+1][1].imshow(im[2] - pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
                 ax_list[kk+1][2].imshow(pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
 
-            plt.subplots_adjust(wspace=None, hspace=None)
-            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid.png', dpi=300)
+            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_U.png', dpi=300)
+
+            # Figure with grid of Q images subtract in high and low pass filters
+            vmin = np.percentile(ims[0][1][~np.isnan(ims[0][1])], 5.)
+            sigma=3
+
+            fig, ax_list = plt.subplots(6,3, figsize=(10,10), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
+            plt.suptitle(ds+' - Qphi', fontsize=fontSize+2)
+
+            ax_list[0][0].imshow(ims[0][1], vmin=vmin, vmax=vmax)
+            ax_list[0][0].set_title('No Filter', fontsize=fontSize)
+            ax_list[0][0].set_ylabel('No Sub', fontsize=fontSize)
+            ax_list[0][1].imshow(ims[0][1] - pol_tools.gauss_filter(ims[0][1], sigma=sigma), vmin=vmin, vmax=vmax)
+            ax_list[0][1].set_title('High Pass', fontsize=fontSize)
+            ax_list[0][2].imshow(pol_tools.gauss_filter(ims[0][1]), vmin=vmin, vmax=vmax)
+            ax_list[0][2].set_title('Low Pass', fontsize=fontSize)
+
+            for kk, im in enumerate(ims[1:]):
+                key = sorted(self.test_funcs.keys())[kk]
+                ax_list[kk+1][0].imshow(im[1], vmin=vmin, vmax=vmax)
+                ax_list[kk+1][0].set_ylabel(key.strip('_').split('_')[-1], fontsize=fontSize)
+                ax_list[kk+1][1].imshow(im[1] - pol_tools.gauss_filter(im[1], sigma=sigma), vmin=vmin, vmax=vmax)
+                ax_list[kk+1][2].imshow(pol_tools.gauss_filter(im[1], sigma=sigma), vmin=vmin, vmax=vmax)
+
+            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_Q.png', dpi=300)
 
 
 
@@ -358,7 +385,8 @@ if __name__ == "__main__":
     test_funcs = {"remove_quadrupole_rstokes":pol_tools.remove_quadrupole_rstokes,
                 "remove_quadrupole_podc_I":pol_tools.remove_quadrupole_podc_group,
                 "remove_quadrupole_podc_Udiv":pol_tools.remove_quadrupole_podc_group,
-                "remove_quadrupole_podc_UImix":pol_tools.remove_quadrupole_podc_group}  
+                "remove_quadrupole_podc_UImix":pol_tools.remove_quadrupole_podc_group,
+                "remove_quadrupole_podc_UdivImix":pol_tools.remove_quadrupole_podc_group}  
 
     theta_bounds = (0., np.pi)
     
@@ -390,6 +418,12 @@ if __name__ == "__main__":
                                 "theta_bounds":theta_bounds, "rin":30, "rout":100,
                                 "octo":octo, "scale_by_r":False, "save":True,
                                 "figNum":80, "quad_scale":'UI_mix', "pos_pole":False})
+    func_kwargs.update(remove_quadrupole_podc_UdivImix={"path_fn":None, "recipe_temp":recipe_temp, "queue_path":queue_path, 
+                                "path_list":None, "dtheta0":np.pi/2.,
+                                "C0":-3., "do_fit":True,
+                                "theta_bounds":theta_bounds, "rin":30, "rout":100,
+                                "octo":octo, "scale_by_r":False, "save":True,
+                                "figNum":80, "quad_scale":'UdivI_mix', "pos_pole":False})
 
     
     # Create the test suite object.
@@ -397,11 +431,9 @@ if __name__ == "__main__":
     
     # Run the functions on the test datasets.
     suite.run()
-    # Plot the output.
+    # Analyze and plot the output.
     suite.analyze_output()
     suite.plot_output()
-    # Eventually, do some analysis on the output....
-    
     
     # Pause before exiting. Enter 'c' to end the script.
     # pdb.set_trace()

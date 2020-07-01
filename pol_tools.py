@@ -60,6 +60,8 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             U_abs: absolute value of U after subtracting median
             U_div: divided by pole to fit radial profile, then refit
             U_pos: Only keep positive of pole, then fit radial profile and refit pole
+            UI_mix: Linear combination of I and med(U) profile
+            UdivI_mix: Linear combination of I and U_div method
         pos_pole: choice of pole function (1: range from 0 to 1, 2: negatives = 0,
             else: -1 to 1)
     
@@ -180,17 +182,11 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     # Try to find radial profile of pole using absolute value of Ur
     elif quad_scale == 'U_abs':
         Ur_absolute = np.absolute(Ur_clipped-Ur_bg_mean)
-        plt.imshow(Ur_absolute,vmin=np.nanpercentile(Ur_absolute,5), vmax=np.nanpercentile(Ur_absolute,95))
-        plt.colorbar()
-        plt.show()
         quad_scaling, rprof = get_ann_stdmap(Ur_absolute, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
         quad_scaling = gaussfilter(quad_scaling)
-        plt.imshow(quad_scaling,vmin=np.nanpercentile(quad_scaling,5), vmax=np.nanpercentile(quad_scaling,95))
-        plt.colorbar()
-        plt.show()
     
     # Perform the fit. (First fit if it being done twice)
-    if quad_scale != 'UI_mix':
+    if quad_scale != 'UI_mix' and quad_scale != 'UdivI_mix':
         p0 = np.array([dtheta0, C0])
     else:
         p0 = np.array([dtheta0, C0, 0.5, 0.5]) # half-half U, I mix as guess
@@ -208,44 +204,38 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     
     # MORE Quad Scale options where pole fitting is done again
     # Find radial profile by dividing the first fit, clipping extremes
-    if quad_scale == 'U_div':
+    if quad_scale == 'U_div' or quad_scale == 'UdivI_mix':
         quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) 
         quad_bf = quad_bf / np.nanmax(quad_bf)  
-        #plt.imshow(quad_bf)
-        #plt.colorbar()
-        #plt.show()
+
         quad_Ur_scalefit = Ur_clipped / quad_bf
         quad_Ur_scalefit[quad_Ur_scalefit > np.nanpercentile(quad_Ur_scalefit, 98)] = np.nan # Clip divide by zeros
         quad_Ur_scalefit[quad_Ur_scalefit < 0] = np.nan  # Negatives aren't helpful
-        #plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
-        #plt.colorbar()
-        #plt.show()
+
         quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
         quad_scaling = gauss_filter(quad_scaling)
-        #plt.imshow(quad_scaling)
-        #plt.colorbar()
-        #plt.show()
         
         if do_fit:
             from scipy.optimize import fmin
-            output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
+            if quad_scale != 'UdivI_mix':
+                output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
+                            full_output=1, disp=1)
+            else:
+                output = fmin(UI_residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds, I, quad_scaling),
                           full_output=1, disp=1)
             pf = output[0]
         else:
             pf = p0
+
     # Find radial profile by only keeping positive of previous pole fit, then fit again
     elif quad_scale == 'U_pos':
         quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) # Raw pole shape
         quad_bf[quad_bf < np.nanpercentile(quad_bf,90)] = np.nan  # Mask negatives
         quad_Ur_scalefit = Ur_clipped * quad_bf
-        plt.imshow(quad_Ur_scalefit, vmin=np.nanpercentile(quad_Ur_scalefit,5), vmax=np.nanpercentile(quad_Ur_scalefit,95))
-        plt.colorbar()
-        plt.show()
+
         quad_scaling, rprof = get_ann_stdmap(quad_Ur_scalefit, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
         quad_scaling = gauss_filter(quad_scaling)
-        plt.imshow(quad_scaling)
-        plt.colorbar()
-        plt.show()
+
         
 
         if do_fit:
@@ -258,6 +248,9 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
 
     if quad_scale == 'UI_mix':
         quad_scaling = pf[2]*gauss_filter(I) + pf[3]*gauss_filter(Ur_med)
+    elif quad_scale == 'UdivI_mix':
+        quad_scaling = pf[2]*gauss_filter(I) + pf[3]*gauss_filter(quad_scaling)
+
     quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole)*quad_scaling
     
     # Get and plot the fit profiles to compare with I and Ur profiles
