@@ -1248,7 +1248,7 @@ def get_ann_stdmap(im, cen, radii, phi=None, r_max=None, mask_edges=False,
 		az_prof = []
 		for rr in az_rad:
 			wr = np.nonzero((radii >= int(rr)-2.5) & (radii < int(rr)+2.5))
-			bin_med, bin_edges, bin_num = binned_statistic(np.degrees(phi[wr]), im[wr], statistic='median', bins=36)
+			bin_med, bin_edges, bin_num = binned_statistic(np.degrees(phi[wr]), np.nan_to_num(im[wr], 0.), statistic='median', bins=36)
 			bin_width = (bin_edges[1] - bin_edges[0])
 			bin_centers = bin_edges[1:] - bin_width/2
 			#az_prof.append([int(rr),np.degrees(phi[wr]),im[wr]])

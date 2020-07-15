@@ -22,14 +22,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 import pol_tools
-from pol_analysis import robust_std
+from pol_analysis import * #robust_std, azimuthal_disk_brightness, aperture_disk_brightness, plot_aperture_brightness
 from astropy.stats import sigma_clip
 
 
 base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
+#output_dir = base_dir + "output/"
 output_dir = base_dir + "output/"
 recipe_temp = base_dir + "template_recipe_stokesdc_from_podc-tme.xml"
-queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
+#queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
+queue_path = '/Users/Tom/Research/data/gpi/queue/'
 
 
 class Suite:
@@ -58,6 +60,8 @@ class Suite:
     
     # Set up output directories, etc.
     def setup_dirs(self):
+        if not os.path.exists(self.output_dir):
+            os.mkdir(output_dir)
         
         for ds in self.datasets:
             ds_output_dir = self.output_dir + ds
@@ -68,7 +72,7 @@ class Suite:
         return
     
     # Measure some metrics for comparison...
-    def analyze_output(self):
+    def analyze_output(self, save=True):
         
         # Noise amplitude at range of radii
         # Calculated in high pass, low pass, and no filter images
@@ -81,6 +85,7 @@ class Suite:
         for ii, ds in enumerate(self.datasets):
             self.noise[ds] = {}
             ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
+            labels = ['no sub']
             for key in sorted(self.test_funcs.keys()):
                 try:
                     if key == "remove_quadrupole_rstokes":
@@ -94,9 +99,10 @@ class Suite:
                     elif key == "remove_quadrupole_podc_UdivImix":
                         fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
-
+                    labels.append(key.strip('_').split('_')[-1])
                 except:
                     ims.append(np.nan*np.ones(ims[0].shape))
+                    labels.append('None')
 
             # Dictionary for normal, low pass, and high pass
             self.noise[ds]['nom'] = {}
@@ -199,9 +205,34 @@ class Suite:
             ax2.set_xlabel('Inner radius + 5 px')
             ax2.legend()
 
-            plt.savefig(self.output_dir+ds+'/'+'subtraction_noise_comparison_'+std_method+'.png', dpi=300)
+            if save:
+                plt.savefig(self.output_dir+ds+'/'+'subtraction_noise_comparison_'+std_method+'.png', dpi=300)
 
+            apBrights = []
+            regionFiles = ['/Users/Tom/Desktop/regions_hd32297_v0.txt',
+                            'randomseed191089',
+                            '/Users/Tom/Desktop/regions_ceant_v0.txt',
+                            'randomseed73',
+                            'randomseed7112']
+            for kk, cube in enumerate(ims):
+                # Azimuthal disk flux and SNR cuts.
+                r_lists = 5*[np.arange(10, 100, 20)]
+                yranges = [(-40, 400), (-100, 200), (-100, 100), (-200, 300), (-100, 100)]
+                try:
+                    azimuthal_disk_brightness(cube[1], cube[2], star, r_lists[ii], yranges[ii])
+                except Exception as ee:
+                    print(ee)
+                # Targeted aperture disk brightness.
+                apBrights.append(aperture_disk_brightness(cube[1], cube[2], regionFiles[ii]))
 
+            # Plot the aperture brightness measurements.
+            fig1, ax1 = plot_aperture_brightness(apBrights, labels=labels)
+            ax1.set_title(ds, fontsize=14)
+            
+            # if save:
+            fig1.savefig(self.output_dir+ds+'/'+'aperture_brightness_comparison_'+std_method+'.png', dpi=300)
+
+            # pdb.set_trace()
 
         # SNR gain at specific locations?
         
@@ -430,11 +461,14 @@ if __name__ == "__main__":
     suite = Suite(test_funcs, func_kwargs, datasets, input_files)
     
     # Run the functions on the test datasets.
-    suite.run()
-    # Analyze and plot the output.
-    suite.analyze_output()
-    suite.plot_output()
+# TEMP!!!
+#    suite.run()
+    
+    # Analyze the output.
+    suite.analyze_output(save=False)
+    # Plot the output.
+#    suite.plot_output()
     
     # Pause before exiting. Enter 'c' to end the script.
-    # pdb.set_trace()
+    pdb.set_trace()
     

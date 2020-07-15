@@ -235,7 +235,9 @@ def measure_azimuthal_profile(data, star, add_noise=False, model=False):
 		return
 
 
-def auto_disk_brightness(data, noise_map, star):
+def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
+	from ttools import make_radii, make_phi, get_ann_stdmap
+	from astropy.convolution import Gaussian1DKernel, Box1DKernel, convolve
 	
 	radii = make_radii(data, star)
 	# Compute PA angles with 0 at +y (assuming things are north up).
@@ -252,30 +254,40 @@ def auto_disk_brightness(data, noise_map, star):
 	snr_map = data/noise_std
 	
 	# Annulus radial width.
-	dr = 1 # [pix]
+	dr = 2 # [pix]
 	
 	annuli_flux = []
 	annuli_snr = []
 	annuli_phi = []
 	annuli_r = []
-	r_max = 80.
-	rr = 20
-	while rr < r_max:
+	if r_list is None:
+		r_list = np.arange(10, 100, dr)
+	
+	# For smoothing
+	kernel = Gaussian1DKernel(stddev=1)
+	
+	for rr in r_list:
 		r_cond = (radii >= rr) & (radii < rr+dr)
-		annuli_flux.append(data[r_cond])
-		annuli_snr.append(snr_map[r_cond])
-		annuli_phi.append(phi[r_cond])
+		sortinds = np.argsort(phi[r_cond])
+		# annuli_flux.append(data[r_cond][sortinds])
+		annuli_flux.append(convolve(data[r_cond][sortinds], kernel))
+		annuli_snr.append(snr_map[r_cond][sortinds])
+		# annuli_phi.append(phi[r_cond][sortinds])
+		annuli_phi.append(convolve(phi[r_cond][sortinds], kernel))
 		annuli_r.append(np.array(len(annuli_flux[-1])*[rr]))
-		rr += dr
+		# rr += dr
 	
 	plt.figure(12)
 	plt.clf()
 	plt.subplot(111)
 	plt.subplots_adjust(bottom=0.15, right=0.98, top=0.98, left=0.16)
 	for ii in range(len(annuli_flux)):
-		plt.plot(np.degrees(annuli_phi[ii]), annuli_flux[ii], '.', alpha=0.3)
+		plt.plot(np.degrees(annuli_phi[ii]), annuli_flux[ii], '-', alpha=0.3, label="r={} pix".format(annuli_r[ii][0]))
 	plt.ylabel('Flux')
 	plt.xlabel('PA (0 is +y) [deg]')
+	plt.legend(numpoints=1, ncol=3, loc=1)
+	if yrange is not None:
+		plt.ylim(yrange[0], yrange[1])
 	plt.draw()
 	
 	plt.figure(13)
@@ -286,6 +298,7 @@ def auto_disk_brightness(data, noise_map, star):
 		plt.plot(np.degrees(annuli_phi[ii]), annuli_snr[ii], '.', alpha=0.3)
 	plt.ylabel('SNR')
 	plt.xlabel('PA (0 is +y) [deg]')
+	plt.ylim(-20, 20)
 	plt.draw()
 	
 	# Do some gymnastics to pad out all annuli arrays to same length.
@@ -335,6 +348,52 @@ def auto_disk_brightness(data, noise_map, star):
 	pdb.set_trace()
 	
 	return
+
+
+def aperture_disk_brightness(data, noisemap, regionFile, radius=3):
+	from regions import read_ds9
+	from ttools import make_radii
+	
+	if 'randomseed' in regionFile:
+		seed = int(regionFile.split('randomseed')[-1])
+		np.random.seed(seed=seed)
+		cens = np.array([70, 70]) + np.array([160, 160])*np.random.rand(20,2)
+	else:
+		regions = read_ds9(regionFile)
+		# Get centers in numpy coordinates.
+		cens = [np.array([reg.center.y, reg.center.x]) for reg in regions]
+	
+	apMeans = []
+	apSums = []
+	for ii, cen in enumerate(cens):
+		radii = make_radii(data, cen)
+		apVals = data[radii <= radius]
+		apMeans.append(np.nanmean(apVals))
+		apSums.append(np.nansum(apVals))
+	
+	apMeans = np.array(apMeans)
+	apSums = np.array(apSums)
+	
+	return apMeans, apSums, cens
+
+
+def plot_aperture_brightness(data, labels=None):
+	
+	colors = ['C0', 'C1', '0.5', 'm', 'k', 'c']
+	
+	fig = plt.figure(20)
+	fig.clf()
+	ax = plt.subplot(111)
+	plt.subplots_adjust(top=0.95, bottom=0.1, left=0.14, right=0.97)
+	for ii, da in enumerate(data):
+		ax.plot(da[1], marker='.', markersize=8, color=colors[ii], label=labels[ii])
+	# ax.set_ylabel("Aperture Mean")
+	ax.set_ylabel("Aperture Sum", fontsize=14)
+	ax.tick_params(labelsize=14)
+	plt.legend(numpoints=1, loc=1, fontsize=12)
+	plt.draw()
+	
+	return fig, ax
 
 
 def robust_std(im, method='biweight'):
