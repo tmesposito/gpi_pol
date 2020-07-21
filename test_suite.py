@@ -27,11 +27,12 @@ from astropy.stats import sigma_clip
 
 
 base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
-#output_dir = base_dir + "output/"
 output_dir = base_dir + "output/"
 recipe_temp = base_dir + "template_recipe_stokesdc_from_podc-tme.xml"
-#queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
-queue_path = '/Users/Tom/Research/data/gpi/queue/'
+queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
+# queue_path = os.path.join(os.path.expandvars("$TEST_QUEUE_PATH"), '')
+
+plt.rcParams.update({'font.size': 10})
 
 
 class Suite:
@@ -151,7 +152,10 @@ class Suite:
             # Create a figure showing noise as a function of radius in low and high pass filtered images
             vmax = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 99.)
             vmin = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 5.)
-            fig, axes = plt.subplots(2,3, figsize=(10,6))
+            colors = ['#4C7F00', 'C1', '0.5', 'm', 'k', 'c']
+            symbols = ['^', 'v', '^', 'v', '^', 'v']
+            fig, axes = plt.subplots(2,3, figsize=(9,6))
+            plt.subplots_adjust(bottom=0.09, left=0.08, right=0.98, hspace=0.3, wspace=0.18)
             plt.suptitle('Noise Comparison ' + ds + ' - Method = '+std_method, fontsize=16)
 
             # Top reference image, no filter
@@ -160,12 +164,14 @@ class Suite:
 
             # Noise plot without filter
             ax0 = axes[1,0]
-            ax0.plot(rin, self.noise[ds]['nom']['no_sub'], label='no_sub')
-            ax0.scatter(rin, self.noise[ds]['nom']['no_sub'])
+            ax0.plot(rin, self.noise[ds]['nom']['no_sub'], marker=symbols[0],
+                     color=colors[0], label='no_sub')
+            # ax0.scatter(rin, self.noise[ds]['nom']['no_sub'])
             for kk, im in enumerate(ims[1:]):
                 key = sorted(self.test_funcs.keys())[kk]
-                ax0.plot(rin, self.noise[ds]['nom'][key],label=(key.strip('_').split('_')[-1]))
-                ax0.scatter(rin, self.noise[ds]['nom'][key])
+                ax0.plot(rin, self.noise[ds]['nom'][key], marker=symbols[kk+1],
+                         color=colors[kk+1], label=(key.strip('_').split('_')[-1]))
+                # ax0.scatter(rin, self.noise[ds]['nom'][key])
             ax0.set_title('No Filter')
             ax0.set_ylabel('Noise')
             ax0.set_xlabel('Inner radius + 5 px')
@@ -177,14 +183,16 @@ class Suite:
 
             # Noise plot, high pass
             ax1 = axes[1,1]
-            ax1.plot(rin, self.noise[ds]['hp']['no_sub'], label='no_sub')
-            ax1.scatter(rin, self.noise[ds]['hp']['no_sub'])
+            ax1.plot(rin, self.noise[ds]['hp']['no_sub'], marker=symbols[0],
+                     color=colors[0], label='no_sub')
+            # ax1.scatter(rin, self.noise[ds]['hp']['no_sub'])
             for kk, im in enumerate(ims[1:]):
                 key = sorted(self.test_funcs.keys())[kk]
-                ax1.plot(rin, self.noise[ds]['hp'][key],label=(key.strip('_').split('_')[-1]))
-                ax1.scatter(rin, self.noise[ds]['hp'][key])
+                ax1.plot(rin, self.noise[ds]['hp'][key], marker=symbols[kk+1],
+                         color=colors[kk+1], label=(key.strip('_').split('_')[-1]))
+                # ax1.scatter(rin, self.noise[ds]['hp'][key])
             ax1.set_title('High Pass')
-            ax1.set_ylabel('Noise')
+            # ax1.set_ylabel('Noise')
             ax1.set_xlabel('Inner radius + 5 px')
             ax1.legend()
 
@@ -194,14 +202,16 @@ class Suite:
 
             # Noise plot, low pass
             ax2 = axes[1,2]
-            ax2.plot(rin, self.noise[ds]['lp']['no_sub'], label='no_sub')
-            ax2.scatter(rin, self.noise[ds]['lp']['no_sub'])
+            ax2.plot(rin, self.noise[ds]['lp']['no_sub'], marker=symbols[0],
+                     color=colors[0], label='no_sub')
+            # ax2.scatter(rin, self.noise[ds]['lp']['no_sub'])
             for kk, im in enumerate(ims[1:]):
                 key = sorted(self.test_funcs.keys())[kk]
-                ax2.plot(rin, self.noise[ds]['lp'][key],label=(key.strip('_').split('_')[-1]))
-                ax2.scatter(rin, self.noise[ds]['lp'][key])
+                ax2.plot(rin, self.noise[ds]['lp'][key], marker=symbols[kk+1],
+                         color=colors[kk+1], label=(key.strip('_').split('_')[-1]))
+                # ax2.scatter(rin, self.noise[ds]['lp'][key])
             ax2.set_title('Low Pass')
-            ax2.set_ylabel('Noise')
+            # ax2.set_ylabel('Noise')
             ax2.set_xlabel('Inner radius + 5 px')
             ax2.legend()
 
@@ -209,38 +219,36 @@ class Suite:
                 plt.savefig(self.output_dir+ds+'/'+'subtraction_noise_comparison_'+std_method+'.png', dpi=300)
 
             apBrights = []
-            regionFiles = ['/Users/Tom/Desktop/regions_hd32297_v0.txt',
-                            'randomseed191089',
-                            '/Users/Tom/Desktop/regions_ceant_v0.txt',
-                            'randomseed73',
-                            'randomseed7112']
+            # Aperture coordinate files.
+            regionFiles = [os.path.join(base_dir, 'regions_hd32297_v0.txt'),
+                            os.path.join(base_dir, 'regions_hd191089_v0.txt'),
+                            os.path.join(base_dir, 'regions_ceant_v0.txt'),
+                            os.path.join(base_dir, 'regions_73her_v0.txt'),
+                            os.path.join(base_dir, 'regions_hd7112_v0.txt')]
+            
             for kk, cube in enumerate(ims):
-                # Azimuthal disk flux and SNR cuts.
-                r_lists = 5*[np.arange(10, 100, 20)]
-                yranges = [(-40, 400), (-100, 200), (-100, 100), (-200, 300), (-100, 100)]
-                try:
-                    azimuthal_disk_brightness(cube[1], cube[2], star, r_lists[ii], yranges[ii])
-                except Exception as ee:
-                    print(ee)
+                # # Azimuthal disk flux and SNR cuts.
+                # r_lists = 5*[np.arange(10, 100, 20)]
+                # yranges = [(-40, 400), (-100, 200), (-100, 100), (-200, 300), (-100, 100)]
+                # try:
+                #     azimuthal_disk_brightness(cube[1], cube[2], star, r_lists[ii], yranges[ii])
+                # except Exception as ee:
+                #     print(ee)
                 # Targeted aperture disk brightness.
                 apBrights.append(aperture_disk_brightness(cube[1], cube[2], regionFiles[ii]))
 
             # Plot the aperture brightness measurements.
             fig1, ax1 = plot_aperture_brightness(apBrights, labels=labels)
             ax1.set_title(ds, fontsize=14)
-            
-            # if save:
-            fig1.savefig(self.output_dir+ds+'/'+'aperture_brightness_comparison_'+std_method+'.png', dpi=300)
+            plt.draw()
 
-            # pdb.set_trace()
+            if save:
+                fig1.savefig(self.output_dir+ds+'/'+'aperture_brightness_comparison_'+std_method+'.png', dpi=300)
 
-        # SNR gain at specific locations?
-        
-        
         return
     
     # Plot Qphi and Uphi output for the control data and various test functions.
-    def plot_rstokes(self):
+    def plot_rstokes(self, save=True):
         fontSize = 14
         for ii, ds in enumerate(self.datasets):
             ims = [fits.getdata(self.input_files[ds]['rstokesdc_nosub'])]
@@ -267,8 +275,8 @@ class Suite:
             # plt.suptitle(self.input_files[ds]['rstokesdc_nosub'].split('/')[-1])
 
             # Subtraction visual comparison figure
-            fig, ax_list = plt.subplots(2, len(ims), sharex='col',
-                                        gridspec_kw={'hspace': 0, 'wspace': 0}, figsize=(8,6))
+            fig, ax_list = plt.subplots(2, len(ims), sharex='col', figsize=(11.5,4))
+            plt.subplots_adjust(top=0.85, bottom=0.02, left=0.08, right=0.98, wspace=0, hspace=0)
             plt.suptitle(ds, fontsize=fontSize+2)
             N_axes = ax_list.size
             # Qphi
@@ -294,13 +302,15 @@ class Suite:
                 if jj == N_axes//2:
                     ax.text(-0.5, 0.5, 'U_phi', transform=ax.transAxes)
 
-            plt.savefig(self.output_dir+ds+'/'+'subtraction_visual_comparison.png', dpi=300)
+            if save:
+                plt.savefig(self.output_dir+ds+'/'+'subtraction_visual_comparison.png', dpi=300)
 
             # Figure with grid of U images subtract in high and low pass filters
             vmin = np.percentile(ims[0][2][~np.isnan(ims[0][2])], 5.)
             sigma=3
 
-            fig, ax_list = plt.subplots(6,3, figsize=(10,10), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
+            fig, ax_list = plt.subplots(6,3, figsize=(5,8), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
+            plt.subplots_adjust(top=0.91, bottom=0.05, right=0.98, wspace=0)
             plt.suptitle(ds+' - Uphi', fontsize=fontSize+2)
 
             ax_list[0][0].imshow(ims[0][2], vmin=vmin, vmax=vmax)
@@ -318,13 +328,18 @@ class Suite:
                 ax_list[kk+1][1].imshow(im[2] - pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
                 ax_list[kk+1][2].imshow(pol_tools.gauss_filter(im[2], sigma=sigma), vmin=vmin, vmax=vmax)
 
-            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_U.png', dpi=300)
+            for ax in ax_list.flatten():
+                ax.set_yticks([])
+
+            if save:
+                plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_U.png', dpi=300)
 
             # Figure with grid of Q images subtract in high and low pass filters
             vmin = np.percentile(ims[0][1][~np.isnan(ims[0][1])], 5.)
             sigma=3
 
-            fig, ax_list = plt.subplots(6,3, figsize=(10,10), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
+            fig, ax_list = plt.subplots(6,3, figsize=(5,8), gridspec_kw={'hspace': 0, 'wspace': 0}, sharex='col')
+            plt.subplots_adjust(top=0.91, bottom=0.05, right=0.98, wspace=0)
             plt.suptitle(ds+' - Qphi', fontsize=fontSize+2)
 
             ax_list[0][0].imshow(ims[0][1], vmin=vmin, vmax=vmax)
@@ -341,17 +356,20 @@ class Suite:
                 ax_list[kk+1][0].set_ylabel(key.strip('_').split('_')[-1], fontsize=fontSize)
                 ax_list[kk+1][1].imshow(im[1] - pol_tools.gauss_filter(im[1], sigma=sigma), vmin=vmin, vmax=vmax)
                 ax_list[kk+1][2].imshow(pol_tools.gauss_filter(im[1], sigma=sigma), vmin=vmin, vmax=vmax)
+            
+            for ax in ax_list.flatten():
+                # ax.yaxis.set_visible(False)
+                ax.set_yticks([])
 
-            plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_Q.png', dpi=300)
-
-
+            if save:
+                plt.savefig(self.output_dir+ds+'/'+'filtered_image_grid_Q.png', dpi=300)
 
         return
     
     # Make some summary plots of results...
-    def plot_output(self):
+    def plot_output(self, save=True):
         
-        self.plot_rstokes()
+        self.plot_rstokes(save=save)
         
         return
     
@@ -385,7 +403,6 @@ if __name__ == "__main__":
     datasets = ["HD_32297", "HD_191089", "CE_Ant", "73_Her", "HD_7112"]
 
 
-    
     # The input data files we are using, by data set.
     input_files = {}
 
@@ -461,13 +478,12 @@ if __name__ == "__main__":
     suite = Suite(test_funcs, func_kwargs, datasets, input_files)
     
     # Run the functions on the test datasets.
-# TEMP!!!
-#    suite.run()
+    suite.run()
     
     # Analyze the output.
-    suite.analyze_output(save=False)
+    suite.analyze_output(save=True)
     # Plot the output.
-#    suite.plot_output()
+    suite.plot_output(save=True)
     
     # Pause before exiting. Enter 'c' to end the script.
     pdb.set_trace()

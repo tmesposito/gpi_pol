@@ -227,7 +227,7 @@ def measure_azimuthal_profile(data, star, add_noise=False, model=False):
 	# itime = data_hdu[hdu_ind].header['ITIME'] # [s] integration time per coadd
 	# auto_disk_brightness(data/itime, data_Ur/itime, star)
 	
-	pdb.set_trace()
+	# pdb.set_trace()
 	
 	if output:
 		return [np.nanmax(sl_snr), N_snr_hits, 100*N_snr_hits/sl_snr.size, N_folded_snr_hits, 100*N_folded_snr_hits/folded_snr.size, N_folded_mean_hits, 100*N_folded_mean_hits/folded_mean.size]
@@ -236,36 +236,47 @@ def measure_azimuthal_profile(data, star, add_noise=False, model=False):
 
 
 def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
+	"""
+	Measure and plot image brightness as a function of azimuthal angle in
+	radial annuli of consistent width (set by dr parameter below).
+	
+	data: image array from which to measure brightness.
+	noise_map: image array from which to measure noise.
+	star: [y,x] array or list of pixel on which annuli are centered.
+	r_list: list of radius on which to center annuli.
+	yrange: list of ymin and ymax to enforce for plots.
+	
+	"""
 	from ttools import make_radii, make_phi, get_ann_stdmap
 	from astropy.convolution import Gaussian1DKernel, Box1DKernel, convolve
-	
+
 	radii = make_radii(data, star)
 	# Compute PA angles with 0 at +y (assuming things are north up).
 	phi = make_phi(data, star) - np.pi/2
 	phi[phi < 0] += 2*np.pi
-	
+
 # # TEMP!!!
 #    data = filters.gaussian_filter(data.copy(), 2)
 #    noise_map = filters.gaussian_filter(noise_map.copy(), 2)
-	
+
 	noise_std = get_ann_stdmap(noise_map, star, radii,
 					r_max=145, mask_edges=2)
-	
+
 	snr_map = data/noise_std
-	
+
 	# Annulus radial width.
 	dr = 2 # [pix]
-	
+
 	annuli_flux = []
 	annuli_snr = []
 	annuli_phi = []
 	annuli_r = []
 	if r_list is None:
 		r_list = np.arange(10, 100, dr)
-	
+
 	# For smoothing
 	kernel = Gaussian1DKernel(stddev=1)
-	
+
 	for rr in r_list:
 		r_cond = (radii >= rr) & (radii < rr+dr)
 		sortinds = np.argsort(phi[r_cond])
@@ -276,7 +287,7 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 		annuli_phi.append(convolve(phi[r_cond][sortinds], kernel))
 		annuli_r.append(np.array(len(annuli_flux[-1])*[rr]))
 		# rr += dr
-	
+
 	plt.figure(12)
 	plt.clf()
 	plt.subplot(111)
@@ -289,7 +300,7 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 	if yrange is not None:
 		plt.ylim(yrange[0], yrange[1])
 	plt.draw()
-	
+
 	plt.figure(13)
 	plt.clf()
 	plt.subplot(111)
@@ -300,7 +311,7 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 	plt.xlabel('PA (0 is +y) [deg]')
 	plt.ylim(-20, 20)
 	plt.draw()
-	
+
 	# Do some gymnastics to pad out all annuli arrays to same length.
 	annuli_lens = [len(ann) for ann in annuli_flux]
 	ann_longest = annuli_flux[np.where(annuli_lens==np.nanmax(annuli_lens))[0][0]]
@@ -314,7 +325,7 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 		annuli_snr_pad[ii][:len(ann)] = annuli_snr[ii]
 		annuli_phi_pad[ii][:len(ann)] = annuli_phi[ii]
 		annuli_r_pad[ii][:len(ann)] = annuli_r[ii]
-	
+
 	# flux_max = np.nanmax([max(ann) for ann in annuli_flux])
 	wh_flux_max = np.where(annuli_flux_pad == np.nanmax(annuli_flux_pad))
 	# Find the five highest fluxes by (flattened) index.
@@ -323,7 +334,7 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 	snr_top5 = annuli_snr_pad.flatten()[wh_flux_top5]
 	phi_top5 = annuli_phi_pad.flatten()[wh_flux_top5]
 	r_top5 = annuli_r_pad.flatten()[wh_flux_top5]
-	
+
 	# Discard any points that have low SNR.
 	if np.all(snr_top5 < 3):
 		print("\nWARNING: S/N < 3 at all max flux points - are you sure there's a disk here?")
@@ -333,31 +344,36 @@ def azimuthal_disk_brightness(data, noise_map, star, r_list=None, yrange=None):
 				flux_top5[ii] = -1
 			# elif flux_top5[ii] > 1.5:
 			#     flux_top5[ii] = -1
-	
+
 	# Afterwards, take the max remaining flux as our value.
 	wh_max_final = np.where(flux_top5==np.nanmax(flux_top5))
 	max_flux = flux_top5[wh_max_final]
 	max_snr = snr_top5[wh_max_final]
 	max_phi = phi_top5[wh_max_final]
 	max_r = r_top5[wh_max_final]
-	
+
 	print("Max Flux = %.2f ADU/s +/- %.2f  (assumed units)" % (max_flux, max_flux/max_snr))
 	print("at r = %d px , phi = %.1f deg , SNR = %.1f" % (max_r, np.degrees(max_phi), max_snr))
 	print("y x:", np.where(data==max_flux)[0][0]-star[0], np.where(data==max_flux)[1][0]-star[1])
-	
-	pdb.set_trace()
-	
+
 	return
 
 
 def aperture_disk_brightness(data, noisemap, regionFile, radius=3):
-	from regions import read_ds9
+	"""
+	
+	
+	"""
+	from regions import read_ds9, write_ds9
 	from ttools import make_radii
 	
 	if 'randomseed' in regionFile:
 		seed = int(regionFile.split('randomseed')[-1])
 		np.random.seed(seed=seed)
 		cens = np.array([70, 70]) + np.array([160, 160])*np.random.rand(20,2)
+		# TEMP to output randomly generated positions
+		# for cen in cens:
+		# 	print('circle({},{},3.5967998)'.format(cen[1]+1, cen[0]+1))
 	else:
 		regions = read_ds9(regionFile)
 		# Get centers in numpy coordinates.
@@ -365,32 +381,62 @@ def aperture_disk_brightness(data, noisemap, regionFile, radius=3):
 	
 	apMeans = []
 	apSums = []
+	noiseApMeans = []
+	noiseApSums = []
+	noiseApStds = []
+	nPixAps = []
 	for ii, cen in enumerate(cens):
 		radii = make_radii(data, cen)
 		apVals = data[radii <= radius]
 		apMeans.append(np.nanmean(apVals))
 		apSums.append(np.nansum(apVals))
+		noiseApVals = noisemap[radii <= radius]
+		noiseApMeans.append(np.nanmean(noiseApVals))
+		noiseApSums.append(np.nansum(noiseApVals))
+		noiseApStds.append(np.nanstd(noiseApVals))
+		nPixAps.append(apVals.size)
 	
 	apMeans = np.array(apMeans)
 	apSums = np.array(apSums)
+	noiseApMeans = np.array(noiseApMeans)
+	noiseApSums = np.array(noiseApSums)
+	noiseApStds = np.array(noiseApStds)
+	nPixAps = np.array(nPixAps)
 	
-	return apMeans, apSums, cens
+	return apMeans, apSums, noiseApMeans, noiseApSums, noiseApStds, nPixAps, cens
 
 
 def plot_aperture_brightness(data, labels=None):
 	
-	colors = ['C0', 'C1', '0.5', 'm', 'k', 'c']
+	colors = ['#4C7F00', 'C1', '0.5', 'm', 'k', 'c']
+	symbols = ['^', 'v', '^', 'v', '^', 'v']
 	
-	fig = plt.figure(20)
+	fig = plt.figure(20, figsize=(10.5,5))
 	fig.clf()
-	ax = plt.subplot(111)
-	plt.subplots_adjust(top=0.95, bottom=0.1, left=0.14, right=0.97)
+	ax = plt.subplot(121)
+	ax2 = plt.subplot(122)
+	plt.subplots_adjust(top=0.95, bottom=0.1, left=0.09, right=0.99, wspace=0.18)
 	for ii, da in enumerate(data):
-		ax.plot(da[1], marker='.', markersize=8, color=colors[ii], label=labels[ii])
+		ax.plot(da[1], markersize=6, marker=symbols[ii], color=colors[ii], label=labels[ii])
 	# ax.set_ylabel("Aperture Mean")
 	ax.set_ylabel("Aperture Sum", fontsize=14)
-	ax.tick_params(labelsize=14)
-	plt.legend(numpoints=1, loc=1, fontsize=12)
+	ax.legend(numpoints=1, loc=1, fontsize=12)
+	
+	# plt.subplots_adjust(top=0.95, bottom=0.1, left=0.14, right=0.97)
+	for ii, da in enumerate(data):
+		# ax2.plot(da[1]/np.abs(da[3]), marker='.', markersize=8, color=colors[ii], label=labels[ii])
+		# Propagated error per pixel.
+		errSum = np.sqrt(np.sum(da[5]*da[4]))
+		snrSum = da[1]/errSum
+		if ii == 0:
+			refSnrSum = snrSum.copy()
+		ax2.plot(snrSum/refSnrSum, markersize=6, marker=symbols[ii], color=colors[ii], label=labels[ii])
+
+	# ax.set_ylabel("Aperture Mean")
+	ax2.set_ylabel("SNR Ratio w/ 'No Sub' SNR", fontsize=14)
+	
+	for aa in [ax, ax2]:
+		aa.tick_params(labelsize=14)
 	plt.draw()
 	
 	return fig, ax
