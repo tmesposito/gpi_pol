@@ -33,7 +33,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
                               theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
                               octo=False, scale_by_r=False, save=False, figNum=80,
                               show_region=True, path_fn_stokes=None,
-                              quad_scale=None, pos_pole=False):
+                              quad_scale=None, pos_pole=False, verbose=True):
     """
     Subtract instrumental quadrupole signal from GPI radial Stokes cubes.
     
@@ -103,7 +103,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     star = np.array([140, 140])
     
     fit_fn = path_fn.split('/')[-1]
-    
+
     hdu = fits.open(os.path.expanduser(path_fn))
     data = hdu[1].data
     
@@ -133,7 +133,6 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     else:
         quad_scaling = I_radmedian
 
-    
     
     # Quadrupole or octopole?
     if octo:
@@ -185,8 +184,13 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         quad_scaling, rprof = get_ann_stdmap(Ur_absolute, star, radii, r_max=None, mask_edges=False, use_median=True, rprof_out=True)
         quad_scaling = gaussfilter(quad_scaling)
     
-    # Perform the fit. (First fit if it being done twice)
-    if quad_scale != 'UI_mix' and quad_scale != 'UdivI_mix':
+    if verbose:
+        disp = 1
+    else:
+        disp = 0
+    
+    # Perform the fit. (First fit if it's being done twice)
+    if quad_scale not in ['UI_mix', 'UdivI_mix']:
         p0 = np.array([dtheta0, C0])
     else:
         p0 = np.array([dtheta0, C0, 0.5, 0.5]) # half-half U, I mix as guess
@@ -194,17 +198,18 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     if do_fit:
         from scipy.optimize import fmin
         if quad_scale != 'UI_mix':
-            output = fmin(residuals, p0, (mask_fit*Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds), full_output=1, disp=1)
+            output = fmin(residuals, p0, (mask_fit*Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
+                          full_output=1, disp=disp, maxiter=2000)
         else:
             output = fmin(UI_residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds, I, Ur_med),
-                          full_output=1, disp=1)
+                          full_output=1, disp=disp, maxiter=2000)
         pf = output[0]
     else:
         pf = p0
     
     # MORE Quad Scale options where pole fitting is done again
     # Find radial profile by dividing the first fit, clipping extremes
-    if quad_scale == 'U_div' or quad_scale == 'UdivI_mix':
+    if quad_scale in ['U_div', 'UdivI_mix']:
         quad_bf = 10**pf[1]*quad(phi, pf[0], pole, pos_pole) 
         quad_bf = quad_bf / np.nanmax(quad_bf)  
 
@@ -219,10 +224,10 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             from scipy.optimize import fmin
             if quad_scale != 'UdivI_mix':
                 output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
-                            full_output=1, disp=1)
+                            full_output=1, disp=disp)
             else:
                 output = fmin(UI_residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds, I, quad_scaling),
-                          full_output=1, disp=1)
+                          full_output=1, disp=disp)
             pf = output[0]
         else:
             pf = p0
@@ -241,7 +246,7 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         if do_fit:
             from scipy.optimize import fmin
             output = fmin(residuals, p0, (mask_fit * Ur_clipped - Ur_bg_mean, pole, quad_scaling, phi, theta_bounds),
-                          full_output=1, disp=1)
+                          full_output=1, disp=disp)
             pf = output[0]
         else:
             pf = p0
@@ -260,60 +265,67 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
     
     res_bf = Ur_clipped - quad_bf
     red_chi2_Ur = np.nansum((mask_fit*res_bf - Ur_bg_mean)**2)/(np.where(~np.isnan(mask_fit*res_bf))[0].shape[0] - 2)
-    print("Reduced Chi2 Ur = %.3e" % red_chi2_Ur)
+    if verbose: print("Reduced Chi2 Ur = %.3e" % red_chi2_Ur)
     quad_bf_rotQr = 10**pf[1]*quad(phi, pf[0] + dtheta_Qr, pole, pos_pole)*quad_scaling
     quad_bf_rotQr[radii <= 8.6] = 0.
     Qr_sub = Qr - quad_bf_rotQr
     Qr_sub_res = Qr_clipped - quad_bf_rotQr
     red_chi2_Qr = np.nansum((mask_fit*Qr_sub_res)**2)/(np.where(~np.isnan(mask_fit*Qr_sub_res))[0].shape[0] - 2)
-    print("Reduced Chi2 Qr = %.3e" % red_chi2_Qr)
+    if verbose: print("Reduced Chi2 Qr = %.3e" % red_chi2_Qr)
     
-    fig0 = plt.figure(figNum, figsize=(8, 6))
-    fig0.clf()
-    fig0.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
-    ax0 = fig0.add_subplot(231)
-    ax0.imshow(Ur, vmin=vmin_Ur, vmax=vmax_Ur,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
-    ax0.set_ylabel("U$_\\phi$", rotation=0)
-    ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
-    ax1 = fig0.add_subplot(232)
-    ax1.imshow(res_bf, vmin=vmin_Ur, vmax=vmax_Ur,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
-    ax1.text(0.05, 0.95, "Data$-$Quad", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
-    ax2 = fig0.add_subplot(233)
-    ax2.imshow(quad_bf, vmin=vmin_Ur, vmax=vmax_Ur,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Ur, vmax=vmax_Ur))
-    ax2.text(0.05, 0.95, "Quad", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
-    ax3 = fig0.add_subplot(234)
-    ax3.imshow(Qr, vmin=vmin_Qr, vmax=vmax_Qr,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
-    ax3.set_ylabel("Q$_\\phi$", rotation=0)
-    ax4 = fig0.add_subplot(235)
-    ax4.imshow(Qr_sub, vmin=vmin_Qr, vmax=vmax_Qr,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
-    ax5 = fig0.add_subplot(236)
-    ax5.imshow(quad_bf_rotQr, vmin=vmin_Qr, vmax=vmax_Qr,
-               norm=SymLogNorm(linthresh=linthresh, linscale=linscale, vmin=vmin_Qr, vmax=vmax_Qr))
-    plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
-    if show_region:
-        for ax in [ax1, ax2]:
-            in_circle = plt.Circle(star, rin, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
-            out_circle = plt.Circle(star, rout, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
-            ax.add_artist(in_circle)
-            ax.add_artist(out_circle)
-    for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
-        fpm_circle = plt.Circle(star, 8.6, fill=False, facecolor='None', edgecolor='r', alpha=0.5, linestyle='-', linewidth=1)
-        ax.add_artist(fpm_circle)
-        ax.set_xticks(range(star[1] - 150, star[1] + 151, 100))
-        ax.set_yticks(range(star[0] - 150, star[0] + 151, 100))
-        ax.set_xticklabels(range(-150, 151, 100))
-        ax.set_yticklabels(range(-150, 151, 100))
-    for ax in [ax0, ax1, ax2]:
-        ax.set_xticklabels("")
-    for ax in [ax1, ax2, ax4, ax5]:
-        ax.set_yticklabels("")
-    # plt.tight_layout()
-    plt.draw()
+    if figNum is not None:
+        fig0 = plt.figure(figNum, figsize=(8, 6))
+        fig0.clf()
+        fig0.suptitle("%s\n%s: $\\Delta\\theta$=%.3f deg , amp=%.3e" % (fit_fn, obj, np.degrees(pf[0]), 10**pf[1]), fontsize=14)
+        ax0 = fig0.add_subplot(231)
+        ax0.imshow(Ur,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Ur, vmax=vmax_Ur))
+        ax0.set_ylabel("U$_\\phi$", rotation=0)
+        ax0.text(0.05, 0.95, "Data", fontsize=fontSize-2, transform=ax0.transAxes, verticalalignment='top')
+        ax1 = fig0.add_subplot(232)
+        ax1.imshow(res_bf,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Ur, vmax=vmax_Ur))
+        ax1.text(0.05, 0.95, "Data$-$Quad", fontsize=fontSize-2, transform=ax1.transAxes, verticalalignment='top')
+        ax2 = fig0.add_subplot(233)
+        ax2.imshow(quad_bf,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Ur, vmax=vmax_Ur))
+        ax2.text(0.05, 0.95, "Quad", fontsize=fontSize-2, transform=ax2.transAxes, verticalalignment='top')
+        ax3 = fig0.add_subplot(234)
+        ax3.imshow(Qr,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Qr, vmax=vmax_Qr))
+        ax3.set_ylabel("Q$_\\phi$", rotation=0)
+        ax4 = fig0.add_subplot(235)
+        ax4.imshow(Qr_sub,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Qr, vmax=vmax_Qr))
+        ax5 = fig0.add_subplot(236)
+        ax5.imshow(quad_bf_rotQr,
+                   norm=SymLogNorm(linthresh=linthresh, linscale=linscale,
+                                   vmin=vmin_Qr, vmax=vmax_Qr))
+        plt.subplots_adjust(bottom=0.07, right=0.98, top=0.87, left=0.11, hspace=0.1, wspace=0.05)
+        if show_region:
+            for ax in [ax1, ax2]:
+                in_circle = plt.Circle(star, rin, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
+                out_circle = plt.Circle(star, rout, fill=False, facecolor='None', edgecolor='0.8', alpha=0.7, linestyle='--', linewidth=2)
+                ax.add_artist(in_circle)
+                ax.add_artist(out_circle)
+        for ax in [ax0, ax1, ax2, ax3, ax4, ax5]:
+            fpm_circle = plt.Circle(star, 8.6, fill=False, facecolor='None', edgecolor='r', alpha=0.5, linestyle='-', linewidth=1)
+            ax.add_artist(fpm_circle)
+            ax.set_xticks(range(star[1] - 150, star[1] + 151, 100))
+            ax.set_yticks(range(star[0] - 150, star[0] + 151, 100))
+            ax.set_xticklabels(range(-150, 151, 100))
+            ax.set_yticklabels(range(-150, 151, 100))
+        for ax in [ax0, ax1, ax2]:
+            ax.set_xticklabels("")
+        for ax in [ax1, ax2, ax4, ax5]:
+            ax.set_yticklabels("")
+        # plt.tight_layout()
+        plt.draw()
     
     # Optionally write a new FITS cube and figure for the subtracted images.
     if save:
@@ -358,7 +370,11 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
         # else:
         #     fig0.savefig(os.path.split(os.path.expanduser(path_fn))[0] + , dpi=300, transparent=True, format='png')
         #     fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
-        fig0.savefig(os.path.splitext(output_path)[0] + '.png', dpi=300, transparent=False, format='png')
+        if figNum is not None:
+            try:
+                fig0.savefig(os.path.splitext(output_path)[0] + '.png', dpi=300, transparent=False, format='png')
+            except Exception as ee:
+                print(ee)
     
 # TEMP!!! Subtract instrumental pol from Q and U.
     if path_fn_stokes is not None:
@@ -542,42 +558,51 @@ def remove_quadrupole_rstokes(path_fn, dtheta0=0., C0=2., do_fit=True,
             #     fig0.savefig('quadsub_' + fit_fn.split('.fits')[0] + '.png', dpi=300, transparent=True, format='png')
             # else:
             #     fig0.savefig(os.path.expanduser("/".join(path_fn.split('/')[:-1]) + '/quadsub_' + fit_fn.split('.fits')[0] + '.png'), dpi=300, transparent=True, format='png')
-    
-    # pdb.set_trace()
+
+
     return
 
 
-def remove_quadrupole_batch(path_list=None, path_dir=None, dtheta0=0., C0=2., do_fit=True,
-                              theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
-                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
+def remove_quadrupole_batch(path_list=None, path_dir=None, dtheta0=0., C0=2.,
+                            do_fit=True, theta_bounds=(-np.pi, np.pi),
+                            rin=30, rout=100, octo=False, scale_by_r=False,
+                            save=False, figNum=80, quad_scale=None,
+                            pos_pole=False, verbose=True):
     """
     Subtract quadrupole signal from a bunch of rstokes cubes. Just run
     remove_quadrupole_rstokes in a loop.
     """
-    from glob import glob
     
     # Search for rstokes FITS in path_dir if no path_list is given.
     if path_list is None:
         paths = np.array(glob(path_dir + '*rstokes*.fits'))
         # Reject any already-quad-subtracted cubes.
         wh_quad = ['quadsub' in ff for ff in paths]
-        path_list = paths[~np.array(wh_quad)]
+        if len(wh_quad) > 0:
+            path_list = paths[~np.array(wh_quad)]
+        else:
+            path_list = paths
         path_list = np.sort(path_list)
-    
+
     for ii, path_fn in enumerate(path_list):
         try:
             remove_quadrupole_rstokes(path_fn, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
-                                      theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r, 
-                                      save=save, figNum=figNum, quad_scale=quad_scale, pos_pole=pos_pole)
+                                      theta_bounds=theta_bounds, rin=rin, rout=rout,
+                                      octo=octo, scale_by_r=scale_by_r, save=save,
+                                      figNum=figNum, quad_scale=quad_scale,
+                                      pos_pole=pos_pole, verbose=verbose)
         except:
             print("Failed on %s" % path_fn)
     
     return
 
 
-def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=None, dtheta0=0., C0=2., do_fit=True,
-                              theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
-                              octo=False, scale_by_r=False, save=False, figNum=80, quad_scale=None, pos_pole=False):
+def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=None,
+                                dtheta0=0., C0=2., do_fit=True,
+                                theta_bounds=(-np.pi, np.pi), rin=30, rout=100,
+                                octo=False, scale_by_r=False, save=False,
+                                overwrite=None, figNum=80, quad_scale=None,
+                                pos_pole=False, out_dir=None, verbose=True):
     """
     Performs remove_quadrupole_rstokes on multiple rstokes files constructed from the minimum number of podc files (4), 
     then combines the results
@@ -588,47 +613,61 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
         path_fn: str, relative path to folder with podc files.
         recipe_temp: str, relative path to recipe template.
         queue_path: str, relative path to gpi-pipeline queue folder.
+        overwrite: 0 to force overwriting of any existing files/directories.
         The rest of the inputs are the same as remove_quadrupole_rstokes.
     
     Outputs:
         If save is True, writes a new FITS file containing the final quadrupole-subtracted
         radial Stokes cube. 
     """
+
+    if out_dir is None:
+        out_dir = os.path.join(path_fn, 'stokes_output/')
+    recipe_dir = os.path.join(out_dir, 'recipe_tmp/')
     
-    recipe_dir = path_fn+'/recipe_tmp/'
-    out_dir = path_fn+'/stokes_output/'
     print('Output will be placed in ', out_dir)
 
     if path_list:
         podc_files = path_list
     else:
         podc_files = sorted(glob(path_fn+'*podc*.fits'))
-    
+
     try:
-        os.mkdir(out_dir)
-        overwrite = 0
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
+        if overwrite is None: overwrite = 0
     except:
         #overwrite = input('Converted rstokes cubes may already exist. \nEnter 1 to use, 2 to remove and overwrite, or nothing to quit.')
-        overwrite = 1
+        if overwrite is None: overwrite = 1
         if not overwrite:
             exit()
     try:
-        os.mkdir(recipe_dir)
+        if not os.path.isdir(recipe_dir):
+            os.mkdir(recipe_dir)
     except:
         pass
 
     if overwrite == 2:
-        existing_files = glob(out_dir+'*')
+        existing_files = glob(out_dir + '*')
         print('The following files will be removed:')
         print(existing_files[i] for i in range(len(existing_files)))
         confirm = input('Confirm remove these files? (y/n)')
         os.remove(existing_files) if confirm == 'y' else exit()
 
-    if overwrite == 0 or overwrite == 2:
+    if overwrite in [0, 2]:
         print('Starting GPI podc to rstokes conversions...')
-        # Get podc groups of 4 to convert to rstokes
+        # Get podc groups of at least 4 to convert to rstokes
+        # Last group can contain up to 7 podc's.
         num_g = int(np.floor((len(podc_files)/4)))
-        im_groups = [podc_files[i*4:i*4+4] for i in range(num_g)]
+        num_left = len(podc_files)
+        im_groups = []
+        for ii in range(num_g):
+            if num_left >= 2*4:
+                im_groups.append(podc_files[ii*4:ii*4+4])
+            else:
+                im_groups.append(podc_files[ii*4:])
+                break
+            num_left -= 4
 
         # Recipe editing
         name_base = recipe_temp.strip('/').split('/')[-1].replace('template_recipe','').replace('.xml','')
@@ -643,9 +682,9 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
             dataset.setAttribute('OutputDir', out_dir)
 
             # Add file names
-            for file in group:
+            for ff in group:
                 fits_att = recipe_xml.createElement('fits')
-                fname = file.strip('/').split('/')[-1]
+                fname = os.path.split(ff)[-1]
                 fits_att.setAttribute('FileName', fname)
                 recipe_xml.getElementsByTagName('dataset')[0].appendChild(fits_att)
 
@@ -665,13 +704,15 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
     print('Starting batch remove quadrupole...')
 
     # Remove quadrupoles
-    remove_quadrupole_batch(path_list=None, path_dir=out_dir, dtheta0=dtheta0, C0=C0, do_fit=do_fit,
-                            theta_bounds=theta_bounds, rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r,
-                            save=save, figNum=figNum, quad_scale=quad_scale, pos_pole=pos_pole)
+    remove_quadrupole_batch(path_list=None, path_dir=out_dir, dtheta0=dtheta0,
+                            C0=C0, do_fit=do_fit, theta_bounds=theta_bounds,
+                            rin=rin, rout=rout, octo=octo, scale_by_r=scale_by_r,
+                            save=save, figNum=figNum, quad_scale=quad_scale,
+                            pos_pole=pos_pole, verbose=verbose)
 
     print('\n\tPole subtraction complete, combining subtracted rstokes cubes.')
     # Gather subtracted rstokes and combine
-    sub_rstokes = glob(out_dir+'*rstokesdc_quadsub.fits')
+    sub_rstokes = glob(out_dir + '*rstokesdc_quadsub.fits')
 
     hdu_master = fits.open(sub_rstokes[0])
     data = hdu_master[1].data
@@ -690,26 +731,30 @@ def remove_quadrupole_podc_group(path_fn, recipe_temp, queue_path, path_list=Non
     Qr_mn_comb = np.nanmean(Qrsub_images, axis=0)
     Ur_mn_comb = np.nanmean(Ursub_images, axis=0)
 
+    if not quad_scale:
+        scale_name = ''
+    elif quad_scale is None:
+        scale_name = 'medianI'
+    else:
+        scale_name = quad_scale
+
     new_hdu = hdu_master
     new_data = data.copy()
     new_data[0] = I_mn_comb
     new_data[1] = Qr_mn_comb
     new_data[2] = Ur_mn_comb
     new_hdu[1].data = new_data.astype('float32')
-    new_hdu[1].header.add_history("Mean combined all subtracted frames")
-
-    if not quad_scale:
-        scale_name = ''
-    else:
-        scale_name = quad_scale
+    new_hdu[1].header.add_history("Subtracted instrumental polarization quadrupole with {} method".format(scale_name))
+    new_hdu[1].header.add_history("Averaged all instrumental polarization subtracted frames")
 
     try:
-        print('Saving mean combined rstokes as ', out_dir+'mean_combined_rstokes_' + scale_name + '_quadsub.fits')
-        new_hdu.writeto(out_dir+'mean_combined_rstokes_' + scale_name + '_quadsub.fits')
-    except:
-        #confirm = input('Overwite existing combined cube? (y/n)')
-        confirm = 'y'
-        new_hdu.writeto(out_dir + 'mean_combined_rstokes_' + scale_name + '_quadsub.fits', overwrite=True) if confirm == 'y' else exit()
+        if overwrite in [0,1,2]:
+            savePath = out_dir + os.path.splitext(os.path.split(path_list[-1])[-1])[0] + '_rstokesdc_{}_quadsub.fits'.format(scale_name.replace('_', ''))
+            print('Saving mean combined rstokes as {}'.format(savePath))
+            new_hdu.writeto(savePath, overwrite=True)
+    except Exception as ee:
+        print(ee)
+        pass
 
     print('Done.')
 

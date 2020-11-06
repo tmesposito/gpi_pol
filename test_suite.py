@@ -9,6 +9,7 @@
 #
 
 import os
+import shutil
 import warnings
 # warnings.simplefilter("ignore", ImportWarning)
 # warnings.simplefilter("ignore", RuntimeWarning)
@@ -17,28 +18,22 @@ try:
     pdb = ipdb
 except:
     import pdb
-import glob
+from glob import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
-import pol_tools
-from pol_analysis import * #robust_std, azimuthal_disk_brightness, aperture_disk_brightness, plot_aperture_brightness
+from gpi_pol import pol_tools
+from gpi_pol.pol_analysis import *
 from astropy.stats import sigma_clip
 
-
-base_dir = os.path.join(os.path.expandvars("$TEST_DATA_PATH"), '')
-output_dir = base_dir + "output/"
-recipe_temp = base_dir + "template_recipe_stokesdc_from_podc-tme.xml"
-queue_path = '/home/aidan/pipelines/gpi_pipeline_1.4.0_r4405_source/data/queue/'
-# queue_path = os.path.join(os.path.expandvars("$TEST_QUEUE_PATH"), '')
 
 plt.rcParams.update({'font.size': 10})
 
 
 class Suite:
     
-    def __init__(self, test_funcs, func_kwargs, datasets, input_files,
-                 test_id='noid'):
+    def __init__(self, base_dir, test_funcs, func_kwargs, datasets, input_files,
+                 output_dir, recipe_temp, queue_path, run_id='noid'):
         """
         Initialization code for Suite object.
         
@@ -47,30 +42,65 @@ class Suite:
             func_kwargs: dict
             datasets: list
             input_files: dict
-            test_id: str name ID for the test you are running.
+            run_id: str name ID for the test you are running.
             
         """
         
         self.test_funcs = test_funcs
         self.func_kwargs = func_kwargs
-        self.test_id = test_id
+        self.run_id = run_id
         self.base_dir = base_dir
         self.output_dir = output_dir
         self.datasets = datasets
         self.input_files = input_files
+        self.recipe_temp = recipe_temp
+        self.queue_path = queue_path
     
     # Set up output directories, etc.
     def setup_dirs(self):
         if not os.path.exists(self.output_dir):
-            os.mkdir(output_dir)
+            os.mkdir(self.output_dir)
         
+        self.ds_output_dir_dict = {}
         for ds in self.datasets:
-            ds_output_dir = self.output_dir + ds
+            ds_output_dir = os.path.join(self.output_dir, ds, '')
             if not os.path.exists(ds_output_dir):
                 os.mkdir(ds_output_dir)
                 print("Created empty output directory at {}".format(ds_output_dir))
+            self.ds_output_dir_dict[ds] = ds_output_dir
         
         return
+    
+    # def move_output_to_input(self):
+    #     
+    #     return
+
+    def cleanup_dirs(self, rm_all=False):
+        for ds in list(self.ds_output_dir_dict.keys()):
+            # Delete everything, or everything except the final output rstokes.
+            if rm_all:
+                try:
+                    shutil.rmtree(self.ds_output_dir_dict[ds])
+                except Exception as ee:
+                    print(ee)
+                    return
+            else:
+                delete_list = glob(self.ds_output_dir_dict[ds] + '*_.fits')
+                delete_list += glob(self.ds_output_dir_dict[ds] + '*_stokesdc.fits')
+                delete_list += glob(self.ds_output_dir_dict[ds] + '*_rstokesdc.fits')
+                delete_list += glob(self.ds_output_dir_dict[ds] + '*_rstokesdc_quadsub.fits')
+                delete_list += glob(self.ds_output_dir_dict[ds] + '*.png')
+                for ff in delete_list:
+                    try:
+                        os.remove(ff)
+                    except:
+                        continue
+                try:
+                    if os.path.isdir(self.ds_output_dir_dict[ds] + 'recipe_tmp'):
+                        shutil.rmtree(self.ds_output_dir_dict[ds] + 'recipe_tmp')
+                except:
+                    pass
+
     
     # Measure some metrics for comparison...
     def analyze_output(self, save=True):
@@ -90,15 +120,15 @@ class Suite:
             for key in sorted(self.test_funcs.keys()):
                 try:
                     if key == "remove_quadrupole_rstokes":
-                        fp = glob.glob(self.output_dir + ds + '/*_quadsub.fits')[0]
+                        fp = glob(self.output_dir + ds + '/*_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_I":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_Udiv":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UImix":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UdivImix":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
                     labels.append(key.strip('_').split('_')[-1])
                 except:
@@ -220,11 +250,11 @@ class Suite:
 
             apBrights = []
             # Aperture coordinate files.
-            regionFiles = [os.path.join(base_dir, 'regions_hd32297_v0.txt'),
-                            os.path.join(base_dir, 'regions_hd191089_v0.txt'),
-                            os.path.join(base_dir, 'regions_ceant_v0.txt'),
-                            os.path.join(base_dir, 'regions_73her_v0.txt'),
-                            os.path.join(base_dir, 'regions_hd7112_v0.txt')]
+            regionFiles = [os.path.join(self.base_dir, 'regions_hd32297_v0.txt'),
+                            os.path.join(self.base_dir, 'regions_hd191089_v0.txt'),
+                            os.path.join(self.base_dir, 'regions_ceant_v0.txt'),
+                            os.path.join(self.base_dir, 'regions_73her_v0.txt'),
+                            os.path.join(self.base_dir, 'regions_hd7112_v0.txt')]
             
             for kk, cube in enumerate(ims):
                 # # Azimuthal disk flux and SNR cuts.
@@ -255,15 +285,15 @@ class Suite:
             for key in sorted(self.test_funcs.keys()):
                 try:
                     if key == "remove_quadrupole_rstokes":
-                        fp = glob.glob(self.output_dir + ds + '/*_quadsub.fits')[0]
+                        fp = glob(self.output_dir + ds + '/*_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_I":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_I_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_Udiv":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_U_div_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UImix":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UI_mix_quadsub.fits')[0]
                     elif key == "remove_quadrupole_podc_UdivImix":
-                        fp = glob.glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
+                        fp = glob(self.base_dir + ds + '/stokes_output/mean_combined_rstokes_UdivI_mix_quadsub.fits')[0]
                     ims.append(fits.getdata(fp))
 
                 except:
@@ -380,11 +410,14 @@ class Suite:
         for key in self.test_funcs.keys():
             func = self.test_funcs[key]
             for ds in self.datasets:
+                self.func_kwargs[key]['out_dir'] = self.ds_output_dir_dict[ds]
                 if key == 'remove_quadrupole_rstokes':
-                    self.func_kwargs[key]['path_fn'] = self.input_files[ds]["rstokesdc_nosub"]
+                    if self.func_kwargs[key]['path_fn'] is None:
+                        self.func_kwargs[key]['path_fn'] = self.input_files[ds]["rstokesdc_nosub"]
                     self.func_kwargs[key]['save'] = self.output_dir + "{}/{}_quadsub.fits".format(ds, os.path.splitext(os.path.split(self.input_files[ds]['rstokesdc_nosub'])[-1])[0])
                 else:
-                    self.func_kwargs[key]['path_fn'] = self.base_dir + ds + '/'
+                    if self.func_kwargs[key]['path_fn'] is None:
+                        self.func_kwargs[key]['path_fn'] = self.base_dir + ds + '/'
                     self.func_kwargs[key]['path_list'] = self.input_files[ds]["podc_nosub"]
                 func(**self.func_kwargs[key])
                 
@@ -393,7 +426,17 @@ class Suite:
 
 
 if __name__ == "__main__":
-    
+
+    # ***** PATHS TO EDIT ***** #
+    base_dir = os.path.join(os.path.expanduser("~/Dropbox\ \(GPI\)/TEST_SCRATCH/scratch/esposito/pol_test_data/"), '')
+    # Path to output directory.
+    output_dir = os.path.expanduser("~/Research/data/gpi/Reduced/instr_pol_sub_test0/")
+    # Path to the template to make stokesdc cubes from podc.
+    recipe_temp = os.path.expanduser("~/Research/data/gpi/Reduced/recipes/template_recipe_cruncher2020_pol_instrPolSubtraction_polsequence_from_cubes.xml")
+    # Path to the GPI Pipeline queue.
+    queue_path = os.path.join(os.path.expanduser("~/Research/data/gpi/queue/"), '')
+
+
     # The test data sets we are using.
     # HD 32297: high SNR edge-on disk with moderate instrumental noise
     # CE Ant: medium SNR face-on disk with weak instrumental noise
@@ -407,25 +450,25 @@ if __name__ == "__main__":
     input_files = {}
 
     input_files.update(HD_32297={
-                    "podc_nosub":sorted(glob.glob(base_dir + "HD_32297/*_podc_distorcorr.fits")),
+                    "podc_nosub":sorted(glob(base_dir + "HD_32297/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc.fits",
                     "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc.fits"})
                     # "stokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_stokesdc_sm0_stpol1-3.fits",
                     # "rstokesdc_nosub":base_dir + "HD_32297/S20141218S0206_podc_distorcorr_rstokesdc_sm0_stpol1-3.fits"})
     input_files.update(HD_191089={
-                    "podc_nosub":sorted(glob.glob(base_dir + "HD_191089/*_podc_distorcorr.fits")),
+                    "podc_nosub":sorted(glob(base_dir + "HD_191089/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "HD_191089/S20150901S0340_podc_distorcorr_stokesdc_sm1_stpol7-13.fits",
                     "rstokesdc_nosub":base_dir + "HD_191089/S20150901S0340_podc_distorcorr_rstokesdc_sm1_stpol7-13.fits"})
     input_files.update(CE_Ant={
-                    "podc_nosub":sorted(glob.glob(base_dir + "CE_Ant/*_podc_distorcorr.fits")),
+                    "podc_nosub":sorted(glob(base_dir + "CE_Ant/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "CE_Ant/S20180405S0070_podc_distorcorr_stokesdc_sm1_stpol13-15.fits",
                     "rstokesdc_nosub":base_dir + "CE_Ant/S20180405S0070_podc_distorcorr_rstokesdc_sm1_stpol13-15.fits"})
     input_files.update({'73_Her':{
-                    "podc_nosub":sorted(glob.glob(base_dir + "73_Her/*_podc_distorcorr.fits")),
+                    "podc_nosub":sorted(glob(base_dir + "73_Her/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_stokesdc.fits",
                     "rstokesdc_nosub":base_dir + "73_Her/S20170809S0103_podc_distorcorr_rstokesdc.fits"}})
     input_files.update(HD_7112={
-                    "podc_nosub":sorted(glob.glob(base_dir + "HD_7112/*_podc_distorcorr.fits")),
+                    "podc_nosub":sorted(glob(base_dir + "HD_7112/*_podc_distorcorr.fits")),
                     "stokesdc_nosub":base_dir + "HD_7112/S20181121S0094_podc_distorcorr_stokesdc.fits",
                     "rstokesdc_nosub":base_dir + "HD_7112/S20181121S0094_podc_distorcorr_rstokesdc.fits"})
         
